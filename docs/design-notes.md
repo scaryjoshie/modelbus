@@ -108,9 +108,16 @@ Layered, cheapest first:
    block into each host's global instructions file for hosts that ignore MCP
    instructions. For Claude Code, a plugin can bundle skill + MCP + hooks.
 
+**Onboarding is opt-in per provider.** `modelbus init` detects installed hosts
+(Claude Code CLI, Claude desktop app, Codex, Cursor, Gemini, OpenCode, Aside, ...) and
+the user opts each one in. Each provider is one module (section 14) that knows how to
+detect itself, write its MCP config, deliver wakes, report needs-attention, and focus
+its window.
+
 **Onboarding:**
-- `modelbus init` once per machine: detects installed hosts, writes MCP config into
-  each, installs Claude Code hooks (SessionStart / Stop drain inbox).
+- `modelbus init` once per machine: detects installed hosts, lets the user opt in per
+  provider, writes MCP config into each, installs Claude Code hooks (SessionStart /
+  Stop drain inbox).
 - `modelbus run <host> [--as name] [--at path]`: opens a tmux pane, starts the host,
   sets the agent name in env so the MCP server pre-registers it, records the pane for
   wake delivery. Solves identity, wake, and behavior injection in one command.
@@ -126,27 +133,61 @@ snippet into that agent's cwd so its *next* session comes up integrated.
 
 ---
 
-## 4. Tools (OPEN, but must stay tiny)
+## 4. Tools and message schema, from the model's perspective (LEANING)
 
-Every MCP tool schema sits in the agent's context every turn. Four terse tools is a few
-hundred tokens; twenty is a problem. Richer operations belong in the CLI.
+Every MCP tool schema sits in the agent's context every turn. Three terse tools is a
+few hundred tokens; twenty is a problem. Richer operations belong in the CLI.
 
-Candidate surface:
-- `sync` — the one tool an agent must know. Sends an outbox, returns new inbox messages
-  and roster deltas since the agent's cursor, long-polls, and on first call acts as
-  registration (see section 7). Also carries `about` updates.
-- `send` — may just be `sync` with an outbox; OPEN whether it deserves its own tool.
-- `who` — full roster for the agent's scope, on demand.
-- `read` / `search` — read a path's or thread's log on demand (section 9).
-- connect / disconnect — OPEN whether explicit or folded into `sync` + presence expiry.
-- talk to orchestrator — probably just `send` to a well-known address, not a tool.
+Design principle: **the model-facing schema is tiny; everything else is internal.**
+Models should never set hop counts, TTLs, idempotency keys, or priority tiers.
 
-Text output format matters as much as tool count: one line per message
-(`codex-1 -> you: token refresh done, please review`), one line per roster change,
-a single word when idle. No JSON in the text the model reads; structured content goes
-in MCP's structured field for hosts that use it.
+### Model-facing tools (three)
 
----
+- `sync(wait?)` — registration on first call; returns new messages and roster changes
+  since the agent's cursor; long-polls up to `wait` seconds; one word when idle.
+- `send(body, to? | thread?, wake?, wait?)` — `to` is one or more agent names (creates
+  a thread); `thread` replies into an existing thread (recipients implied); `to` +
+  `thread` together adds a participant. `wake: true` requests wake-priority delivery.
+  `wait: N` blocks up to N seconds for a reply in that thread and returns it, which is
+  the ask-and-wait pattern for one-to-one questions.
+- `who(filter?)` — roster for the agent's scope, one line per agent, optionally
+  filtered by name, host, path, or `about` text.
+
+Possibly later: `read(thread | path)` for history. Could be a `sync` option.
+
+### What the model reads
+
+One line per message, thread id visible so it can reply:
+
+```
+[t_k3f] aside-1 -> you (wake): Deploy verified; login page 500s on Safari. Screenshot at ~/aside/tasks/8Mq/shot.png
+[t_k3f] you -> aside-1: Thanks. Which endpoint 500s?
++ codex-2 joined at /dev/modelbus "implementing tmux adapter"
+```
+
+No JSON in text output. Structured content can go in MCP's structured field for hosts
+that use it.
+
+### Message fields
+
+Model-facing: `to` / `thread`, `body`, `wake`, `wait`.
+
+Internal: id, thread_id, from_agent_id, created_at, delivered_at per recipient,
+delivery strategy used, expires_at for undelivered wakes, dedupe hash. Hop counter only
+matters once relaying exists; not in v0.
+
+### Thread model
+
+A thread has participants and messages. `send(to: ["a","b"])` creates a three-party
+thread. Replying by thread id means the model never re-specifies recipients. Adding a
+participant is `send(thread, to: "c", body)`. Thread ids are short (4–5 chars).
+
+### Ergonomics check
+
+Walk through as a Claude Code session: start → `sync()` says who you are and what is
+waiting. Need the browser → `who("browser")` → `send(to: "aside-1", body, wait: 120)`
+returns Aside's answer inline. Follow up → `send(thread: "t_k3f", body)`. Nothing else
+to learn. OPEN whether this holds up for Aside's side, whose "turn" is a routine wake.
 
 ## 5. Delivery cascade (LEANING)
 
@@ -370,20 +411,48 @@ browser window focused. The event-routine path is tested after that.
 
 ---
 
-## 12. Cloud / federation (FUTURE, discussed briefly)
+## 12. Cloud, teammates, federation (FUTURE, discussed briefly)
 
-Two layers of *daemon*: a local daemon per device (owns that device's agents and
-delivery adapters) and a global relay that routes between devices. Two layers is
-enough. For the *LLM* orchestrator, one global one is more apt than one per layer.
+Two possible futures: Joshua's own devices linked through a relay, and **teammates**
+(other people's agents talking to Joshua's). The second changes more:
 
-Consequences to avoid painting into a corner now: agent ids should be globally unique
-(embed a device id), the local daemon stays the sole authority for its device, and
-addresses may gain a device prefix (fits the path model: `/laptop/...`). Nothing else
-should be built for this in v0.
+- **No central orchestrator**, obviously. Each person's daemon is sovereign.
+- **No global id registry.** Ids should be self-certifying: a device id derived from a
+  keypair fingerprint (SSH / Matrix / Nostr style), plus a local agent id. Two daemons
+  can then pair by exchanging public keys or a pairing code with no registry.
+  Consequence for v0: generate a daemon keypair at first run and derive the device id
+  from it, even though nothing uses it yet. One-line decision now, migration later.
+- **Trust boundaries.** Cross-daemon links are explicit and carry policy: which of my
+  agents are exposed, whether remote agents may wake mine (default no), whether remote
+  agents may read my logs (default no). "Visibility is wide" (section 9) becomes
+  "visibility is wide *within one person's daemon*" and a policy knob across daemons.
+  Messages from another person's agents are untrusted content and should be rendered
+  with a clear source tag so models treat them as data, not instructions.
+- **Delivery adapters stay local.** A remote daemon never touches my tmux panes; it
+  hands the message to my daemon, which runs its own cascade.
+- Remote agents can appear in the tree under a mount like `/remote/alice/...`, which
+  fits the path model without special cases.
 
----
+Nothing here is built in v0 beyond the keypair-derived device id.
 
-## 13. Open questions (collected)
+## 14. Code architecture sketch (LEANING)
+
+```
+core/       SQLite schema, agents, threads, messages, cursors, guards (constants in one file)
+api/        MCP server (streamable HTTP) and the HTTP handlers the CLI and UI share
+providers/  one module per host: detect(), configure(), deliver() strategies,
+            attention() signals, focus(). e.g. providers/claude-code, providers/aside,
+            providers/tmux (terminal injection is a provider too)
+presence/   process-table and tmux scanner; merges with registered agents
+cli/        modelbus serve | init | run | send | sync | who
+ui/         web UI (graph + tree + threads + user seat)
+```
+
+The provider interface is the extensibility point: adding a host is one directory.
+The delivery cascade (section 5) is just "ask each provider that claims this agent, in
+priority order."
+
+## 15. Open questions (collected)
 
 - Filesystem hierarchy vs. buses (section 8), and whether threads resolve the log
   concern.
@@ -391,7 +460,9 @@ should be built for this in v0.
 - Default visibility scope.
 - Whether `send` is its own tool or just `sync` with an outbox.
 - Explicit connect/disconnect tools vs. presence expiry.
-- Device id in agent ids from day one.
+- Device id in agent ids from day one (leaning yes, keypair-derived; section 12).
+- Whether `send(wait)` ask-and-wait is ergonomic for hosts whose turns are routine
+  wakes (Aside).
 - Pending-agent semantics: can a pending agent message anyone? What does deny do?
 - Which hosts can support "jump to window" and "needs attention" signals.
 - Everything in section 11 marked untested.
