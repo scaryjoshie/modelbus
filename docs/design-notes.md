@@ -110,7 +110,7 @@ Layered, cheapest first:
 
 **Onboarding is opt-in per provider.** `modelbus init` detects installed hosts
 (Claude Code CLI, Claude desktop app, Codex, Cursor, Gemini, OpenCode, Aside, ...) and
-the user opts each one in. Each provider is one module (section 14) that knows how to
+the user opts each one in. Each provider is one module (section 13) that knows how to
 detect itself, write its MCP config, deliver wakes, report needs-attention, and focus
 its window.
 
@@ -435,7 +435,7 @@ Two possible futures: Joshua's own devices linked through a relay, and **teammat
 
 Nothing here is built in v0 beyond the keypair-derived device id.
 
-## 14. Code architecture sketch (LEANING)
+## 13. Code architecture sketch (LEANING)
 
 ```
 core/       SQLite schema, agents, threads, messages, cursors, guards (constants in one file)
@@ -452,7 +452,7 @@ The provider interface is the extensibility point: adding a host is one director
 The delivery cascade (section 5) is just "ask each provider that claims this agent, in
 priority order."
 
-## 15. Open questions (collected)
+## 14. Open questions (collected)
 
 - Filesystem hierarchy vs. buses (section 8), and whether threads resolve the log
   concern.
