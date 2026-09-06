@@ -186,6 +186,18 @@ that use it.
 
 ### Message fields
 
+**OPEN: envelope shape.** "Tiny" refers only to the model-facing surface; the stored
+envelope is a separate choice, since models never see it. Two options:
+1. Own envelope internally; A2A only at the federation boundary with a mapping layer.
+2. **A2A-compatible envelope internally, own transport** (Claude's leaning once the
+   teammate case became explicit): field names and structure follow A2A's Message
+   (`messageId`, `contextId` = thread, `role`, `parts` with a plain-text fast path,
+   `metadata`), so federation is nearly an identity mapping. Do *not* adopt A2A's
+   transport (HTTP JSON-RPC, SSE, webhooks) or Task lifecycle locally: hosts can't be
+   servers, and the daemon still needs inbox/cursors/cascade underneath. Multi-party
+   threads and wake priority are modelbus additions A2A lacks. A2A's
+   `input-required` state maps well onto needs-attention.
+
 Model-facing: `to` / `thread`, `body`, `wake`, `wait`.
 
 Internal: id, thread_id, from_agent_id, created_at, delivered_at per recipient,
