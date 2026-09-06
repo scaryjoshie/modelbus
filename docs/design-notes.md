@@ -191,17 +191,44 @@ to learn. OPEN whether this holds up for Aside's side, whose "turn" is a routine
 
 ### Discovery is user-routed (LEANING)
 
-Agents are not expected to go looking for other agents to talk to. Autonomous
-discovery ("who here deals with X?") is a different product, or an orchestrator's job.
-In modelbus, an agent talks to whoever the user pointed it at ("ask Aside to verify
-the deploy") or whoever messaged it. So `who` is mostly a *resolver*: turn a reference
+In the current version, agents are not expected to go looking for other agents to
+talk to. That is a statement about v0, not a rule: autonomous discovery may well be a
+future feature, and nothing in the design should foreclose it. For now, an agent talks
+to whoever the user pointed it at ("ask Aside to verify the deploy") or whoever
+messaged it. So `who` is mostly a *resolver*: turn a reference
 the user gave into an agent name. It filters on facts the daemon already has (host
 kind, path, cwd, git repo, name, title), not on self-reported status. "The browser,"
 "the Codex in this repo," "the Claude in ~/dev/foo" all resolve from free metadata.
 
-A directory-scoped question ("does anyone under /dev handle billing?") that only the
+A folder-scoped question ("does anyone under /dev handle billing?") that only the
 user or an orchestrator sees is a possible later feature. It is not a broadcast and it
 is not v0.
+
+### The board (LEANING, probably not v0)
+
+For "I'm working on X, tell me if you are too" without alerting anyone: a passive,
+pull-only **board**. An agent may post a short note (e.g. "touching the auth module")
+scoped to its folder; notes expire with the agent's presence or after a few hours.
+Nobody is notified. Notes appear as an extra column in `who` output for agents in
+scope, so reading costs nothing unless an agent calls `who`. No new tool. Posting is
+explicit, optional, and rare; the instructions text does not tell agents to post or
+check unless a "discovery" profile is enabled. The board is essentially the registry
+with an optional note per agent. It must never trigger a message on its own.
+
+### Contact policy: nothing happens without permission (LEANING)
+
+Starting a **new thread** between two agents that the user did not introduce is a
+policy decision, not a free action. Modes:
+- `manual` (leaning default): a new thread initiated by an agent is *pending* until
+  the user approves it in the UI (or an orchestrator does). Replies inside an approved
+  thread never need approval. Threads the user creates by introducing agents are
+  pre-approved.
+- `open`: agents may start threads freely (for people who trust their setup, and for
+  future autonomous discovery).
+- orchestrator-mediated: the orchestrator approves instead of the user.
+
+This keeps manual and orchestrator-driven setups from getting annoying, and gives
+future autonomous discovery a permission model without new primitives.
 
 ## 5. Delivery cascade (LEANING)
 
@@ -298,8 +325,10 @@ visualize, agents in many buses become unmanageable, bus creation/pruning over t
 gets messy even for models, and per-git-repo default buses are wrong (worktrees should
 be independent; cross-repo work should be linkable).
 
-**Filesystem-like hierarchy (LEANING).** Every agent has exactly one home path, e.g.
-`/modelbus/backend/codex-1`. Global root, subdivided however Joshua organizes the
+**Filesystem-like hierarchy (LEANING).** Terminology: the tree is a modelbus object
+graph, **not the disk**. It has two node types: *folders* (containers) and *agents*.
+A path like `/modelbus/backend/codex-1` is a modelbus address and has no relation to
+any directory on the computer. Every agent has exactly one home path. Global root, subdivided however Joshua organizes the
 machine; the top level is *not* projects by default, since this is for everything on
 the computer, not one project.
 Addressing a path delivers to everything under it, so DM (leaf), group (directory),
@@ -485,6 +514,8 @@ priority order."
 - Whether `send(wait)` ask-and-wait is ergonomic for hosts whose turns are routine
   wakes (Aside).
 - Pending-agent semantics: can a pending agent message anyone? What does deny do?
+- Contact policy default (`manual` vs `open`) and how pending threads look in the UI.
+- Whether the board is worth building at all, and when.
 - Which hosts can support "jump to window" and "needs attention" signals.
 - Everything in section 11 marked untested.
 - What v0 actually includes. Leaning: register/sync, direct messages with thread
