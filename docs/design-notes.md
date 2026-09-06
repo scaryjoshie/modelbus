@@ -279,7 +279,7 @@ Aside is a Chromium-based AI browser (YC F25, launched June 2026). Findings belo
 partly from public docs and partly from inspecting the daemon binary, its SQLite
 schema, and local ports on Joshua's machine. **The undocumented parts may change
 without notice.** Joshua's stated interest is interacting with *existing* Aside
-sessions, not creating new ones, and he prefers not to use the Aside CLI.
+sessions, not creating new ones, and they prefer not to use the Aside CLI.
 
 Documented surfaces (docs.aside.com/help/developers):
 - `aside "task"` starts a session; `aside --session <id> "msg"` continues one.
