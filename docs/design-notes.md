@@ -189,6 +189,20 @@ waiting. Need the browser → `who("browser")` → `send(to: "aside-1", body, wa
 returns Aside's answer inline. Follow up → `send(thread: "t_k3f", body)`. Nothing else
 to learn. OPEN whether this holds up for Aside's side, whose "turn" is a routine wake.
 
+### Discovery is user-routed (LEANING)
+
+Agents are not expected to go looking for other agents to talk to. Autonomous
+discovery ("who here deals with X?") is a different product, or an orchestrator's job.
+In modelbus, an agent talks to whoever the user pointed it at ("ask Aside to verify
+the deploy") or whoever messaged it. So `who` is mostly a *resolver*: turn a reference
+the user gave into an agent name. It filters on facts the daemon already has (host
+kind, path, cwd, git repo, name, title), not on self-reported status. "The browser,"
+"the Codex in this repo," "the Claude in ~/dev/foo" all resolve from free metadata.
+
+A directory-scoped question ("does anyone under /dev handle billing?") that only the
+user or an orchestrator sees is a possible later feature. It is not a broadcast and it
+is not v0.
+
 ## 5. Delivery cascade (LEANING)
 
 Delivery is a chain of strategies per agent, tried in order, first success wins. Each
@@ -242,10 +256,14 @@ Two layers, as every chat system converges on:
 | id | `a_7f3k2` | global, never reused | permanent |
 | name | `codex-1` | among live agents in scope | until expiry |
 
-Messages store the id; everything agents read and write uses the name. `about` is a
-separate one-line self-description the agent maintains; the roster also carries facts
-the daemon gets for free (host kind, cwd, git repo/branch, last seen). Keep names
-boring and stable; put role in `about`, because roles change mid-session.
+Messages store the id; everything agents read and write uses the name. The roster
+carries facts the daemon gets for free: host kind, cwd, git repo/branch, last seen,
+busy (mid-turn) or idle, and the host's own session title where one exists (Claude
+Code and Aside both keep one). **Agents should not routinely report what they are
+doing** (LEANING): self-reported status is noisy, stale, and costs tokens, and it only
+matters when it concerns another agent, at which point it belongs in a message to that
+agent. An optional `about` may be set once at launch (by the user or launcher) and
+changed rarely. Keep names boring and stable.
 
 **Registration is the first sync.** Agents register themselves (the alternative is
 manual setup per session). If the agent arrives with a name (from the launcher env),
@@ -305,9 +323,12 @@ Other OPEN items here:
 - Visibility: can agents see the whole tree and every agent? Leaning: default scope is
   your own subtree, full tree available on request, orchestrator and UI see everything.
 - Cross-cutting groups spanning paths: symlinks / mounts, or just threads? OPEN.
-- A central "general" channel: probably the project root path. Rules discussed for it:
-  cannot wake anyone, tighter rate limit, digest mode on busy projects.
-- Mentions inside a group message (`@codex-1`) escalating to wake for that member.
+- Slack-style channels with @mentions can be **relegated**: a directory *is* the
+  channel, scoped to your location in the tree. A message sent to a directory is an
+  announcement visible to everything under it; `@name` inside it escalates to that
+  agent. Because scope follows the tree, a channel log is only as noisy as your
+  subtree. General channels remain suspect because reading logs is annoying; this is
+  a later feature, not v0.
 
 **Communication is expected to be mostly one-to-one.** The tree is an organizational
 overlay (where things are, for the UI and for finding agents), not a routing structure.
