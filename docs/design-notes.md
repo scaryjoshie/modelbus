@@ -16,13 +16,26 @@
 
 ## 1. What modelbus is for
 
-A local message bus so coding agents (Claude Code, Codex, Cursor, Gemini CLI, OpenCode,
-Goose, Cline, Copilot CLI, Aside, and others) can talk to each other on one machine,
-with an orchestrator on top that Joshua can talk to.
+**Premise: stop being the meat proxy.** Joshua runs many AI tools on one machine
+(Claude Code, Codex, Cursor, Aside browser, and others) and currently relays context
+between them by hand. modelbus is a communication layer so those tools can talk to
+each other directly. The original trigger was letting the Aside browser talk to
+Claude Code. The scope is deliberately bigger than that, but the premise stays.
 
-The motivating goal is connecting three kinds of agent through one envelope:
-terminal coding agents, MCP-driven tools, and browser / computer-use agents (Aside
-specifically).
+**What it is not.** Not orchestration software. It does not run agents, assign work,
+or replace anyone's favorite tools. Use whatever tools you like; modelbus only connects
+their comms. It would be easy to turn into an orchestrator by adding chats, and that is
+explicitly not the point. Joshua is a first-class participant on the bus (the web UI is
+their seat, see section 10); an LLM orchestrator is optional, later, and if it exists it
+is just another agent living high in the tree.
+
+Why a bus instead of mounting one tool's MCP server in another: that gives one
+direction (Claude Code drives Aside as a tool). A bus gives symmetry (Aside can
+initiate toward Claude Code) and persistence (a conversation either side can pick up
+later). Those two properties are the value.
+
+The motivating first milestone: Aside and Claude Code exchange messages in both
+directions through the bus with nothing appearing on screen.
 
 ### Hard constraints
 
@@ -218,7 +231,9 @@ gets messy even for models, and per-git-repo default buses are wrong (worktrees 
 be independent; cross-repo work should be linkable).
 
 **Filesystem-like hierarchy (LEANING).** Every agent has exactly one home path, e.g.
-`/modelbus/backend/codex-1`. Global root, grouped into projects, subdivided as needed.
+`/modelbus/backend/codex-1`. Global root, subdivided however Joshua organizes the
+machine; the top level is *not* projects by default, since this is for everything on
+the computer, not one project.
 Addressing a path delivers to everything under it, so DM (leaf), group (directory),
 and broadcast (root) are one mechanism. The tree is easy to visualize, there is no
 "which buses am I in" problem, and `mv` reorganizes. Anyone can message any path;
@@ -244,6 +259,16 @@ Other OPEN items here:
   cannot wake anyone, tighter rate limit, digest mode on busy projects.
 - Mentions inside a group message (`@codex-1`) escalating to wake for that member.
 
+**Communication is expected to be mostly one-to-one.** The tree is an organizational
+overlay (where things are, for the UI and for finding agents), not a routing structure.
+Threads are the communication primitive; a pair thread is an edge in the graph view, a
+three-plus thread is drawn as a small hub node with participants connected to it.
+Multi-agent threads start as pairs and grow by **adding a participant to the thread**
+(email CC / group DM semantics), not by creating groups. Thread membership is
+ephemeral and dies with the conversation. One-to-many addressing is only for
+announcements and may be left out of v0 entirely. A graph with non-overlapping groups
+is the same structure as a shallow tree, so the two visualizations do not conflict.
+
 **v0 may skip all of this** and do direct messaging with a flat root only. If `to` is a
 path string from day one, depth can be added later without a schema change.
 
@@ -260,18 +285,23 @@ path string from day one, depth can be added later without a schema change.
 
 ---
 
-## 10. Orchestrator (LEANING)
+## 10. The user as participant; orchestrator is optional (LEANING)
 
-The orchestrator is **not part of the core API**. It lives on top and uses the same
-tools as any agent, with two privileges: it sees everything, and it can request a wake
-on any peer. v0 orchestrator is zero custom code: a Claude Code session (or Agent SDK
-loop) with a system prompt saying its job is coordination, which Joshua talks to in
-its own terminal. Later the web UI gets a chat box that sends to it at wake priority.
+Joshua is a node on the bus. The web UI is that seat: read any thread, send messages,
+introduce two agents by drawing an edge between them (which creates a thread and sends
+both an introduction). This replaces manual context relaying, which is the whole point.
 
-Join events go to a lobby address the orchestrator watches; other agents are not
-pinged about joins.
+An LLM orchestrator is **not part of the core API and not assumed to exist.** If one is
+ever wanted, it is an ordinary agent living high in the tree with the same tools as
+everyone else. Per-project orchestrators were discussed and deferred indefinitely; an
+agent that lives up the tree covers that if it is ever needed.
 
----
+Because agents talk directly with no supervisor, the loop guards (section 6) and the
+hidden constraint are what make unattended communication safe. They are not optional
+in v0.
+
+Join events go to a lobby address the user (and any orchestrator) can watch; other
+agents are not pinged about joins.
 
 ## 11. Aside (findings from local inspection, September 2026)
 
@@ -340,6 +370,7 @@ should be built for this in v0.
 - Explicit connect/disconnect tools vs. presence expiry.
 - Device id in agent ids from day one.
 - Everything in section 11 marked untested.
-- What v0 actually includes. Leaning: register/sync, direct messages, tmux-paste
-  wake, loop guards, the presence detector, and a minimal writable web UI. Possibly
-  less.
+- What v0 actually includes. Leaning: register/sync, direct messages with thread
+  ids, `who`, one wake adapter (tmux paste), loop guards, and the Aside experiment,
+  with the acceptance test being Aside <-> Claude Code in both directions with nothing
+  on screen. Presence detector and web UI may follow immediately after. Possibly less.
