@@ -212,6 +212,15 @@ it keeps it. If it arrives without one, it gets one assigned at that moment. Nam
 not pre-assigned by the daemon otherwise. Reclaim token stored by the launcher restores
 identity and cursor after restart.
 
+**Registration produces a placement request (LEANING).** A newly registered agent
+shows up as *pending*: visible in the UI, not yet placed in the tree, and (OPEN)
+either unable to message anyone or only able to message the user until placed. It may
+propose a location (e.g. based on its cwd) after looking at the tree. If no
+orchestrator is running, the user allows/denies and places it, e.g. by dragging it in
+the UI. If an orchestrator is running, it handles this. Agents launched via
+`modelbus run` are pre-approved because the user launched them, and `--at` places them
+directly. Deny semantics are OPEN (block, or quarantine to user-only).
+
 **Pruning is state, not deletion.** No sync for ~30 min = offline (gray). ~24 h =
 archived, name released. Records and messages persist.
 
@@ -301,7 +310,21 @@ hidden constraint are what make unattended communication safe. They are not opti
 in v0.
 
 Join events go to a lobby address the user (and any orchestrator) can watch; other
-agents are not pinged about joins.
+agents are not pinged about joins. Pending placement requests (section 7) surface here.
+
+**UI helpers for the user (LEANING, feasibility varies by host):**
+- *Jump to the agent's window.* From the UI, focus the terminal pane or browser tab an
+  agent lives in. For tmux this is `select-window`/`select-pane` plus activating the
+  terminal app via AppleScript (iTerm2 and Terminal.app both support selecting a
+  specific tab). For Aside, focus the session's bound tab. VS Code integrated terminals
+  are probably out of reach. This is user-initiated focus, so it does not violate the
+  hidden constraint.
+- *Show when an agent needs the user.* Two sources: messages addressed to the user
+  node at wake priority, and host-native "needs attention" signals the daemon can
+  watch: Claude Code's Notification hook (permission prompts, idle), Aside's session
+  `suspension` state (`ask-user-question`, visible in its SQLite and daemon logs), Codex
+  approval prompts. Surface as a badge on the agent node and a list in the UI. Easy for
+  Claude Code (hook) and Aside (readable state); OPEN for others.
 
 ## 11. Aside (findings from local inspection, September 2026)
 
@@ -369,6 +392,8 @@ should be built for this in v0.
 - Whether `send` is its own tool or just `sync` with an outbox.
 - Explicit connect/disconnect tools vs. presence expiry.
 - Device id in agent ids from day one.
+- Pending-agent semantics: can a pending agent message anyone? What does deny do?
+- Which hosts can support "jump to window" and "needs attention" signals.
 - Everything in section 11 marked untested.
 - What v0 actually includes. Leaning: register/sync, direct messages with thread
   ids, `who`, one wake adapter (tmux paste), loop guards, and the Aside experiment,
