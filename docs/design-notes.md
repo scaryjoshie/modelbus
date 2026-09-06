@@ -86,6 +86,22 @@ and shares the language. Conventions: Bun defaults, `strict: true`, ESM only, Bi
 format and lint, zod at boundaries, otherwise whatever idiomatic TypeScript encourages.
 Joshua is more familiar with Python and is learning TypeScript; keep code legible.
 
+**Layers, each usable without the ones above it (LEANING):**
+
+1. *Protocol* — thread and message schema, the three MCP tools, the CLI. Could be
+   implemented against a different daemon.
+2. *Daemon* — store, cursors, delivery cascade, loop guards.
+3. *Providers* — per-host detection, MCP config, wake adapters, needs-attention,
+   focus. The detection piece is useful on its own.
+4. *Organization* — folders, projects, scoping. Optional overlay (section 8).
+5. *Policy* — the switches: orchestrator on/off, contact manual/open, project
+   scoping on/off.
+6. *Clients* — the web UI and any orchestrator are clients of the daemon.
+7. *Federation* — pairing daemons across machines and people (section 12).
+
+The simplest flow (open the UI, see every agent on the machine, link a few) needs
+layers 1–3 and 6 only.
+
 **Web UI is first class** and must be able to write (send messages, talk to the
 orchestrator), unlike agent-bus-mcp's read-only viewer. Envisioned as a graph of all
 active agents, with un-integrated ones shown gray, and a way to ask the orchestrator
@@ -328,7 +344,15 @@ be independent; cross-repo work should be linkable).
 **Filesystem-like hierarchy (LEANING).** Terminology: the tree is a modelbus object
 graph, **not the disk**. It has two node types: *folders* (containers) and *agents*.
 A path like `/modelbus/backend/codex-1` is a modelbus address and has no relation to
-any directory on the computer. Every agent has exactly one home path. Global root, subdivided however Joshua organizes the
+any directory on the computer. Every agent has exactly one home path.
+
+**The tree is optional and the default is flat (LEANING).** Every agent sits at the
+root until the user makes a folder; if you never make one, you never see a tree. The
+tree has nothing to do with communication (everything goes through threads); it is an
+observation and scoping overlay. A **project** is a top-level folder with a scope flag:
+agents inside see only each other by default, know their location relative to the
+project, and do not interact outside it unless the policy allows. Cross-project
+communication is possible in the architecture but expected to be rare. Global root, subdivided however Joshua organizes the
 machine; the top level is *not* projects by default, since this is for everything on
 the computer, not one project.
 Addressing a path delivers to everything under it, so DM (leaf), group (directory),
@@ -483,6 +507,27 @@ Two possible futures: Joshua's own devices linked through a relay, and **teammat
 - Remote agents can appear in the tree under a mount like `/remote/alice/...`, which
   fits the path model without special cases.
 
+**Prior art for the teammate case (September 2026):**
+- Claude Code cross-session messaging reaches the user's *own* other machines via
+  Remote Control (v2.1.225+; Windows v2.1.239+). Same account only, Claude Code only,
+  plain text, no persistence. Not cross-person, not cross-tool.
+- A2A v1.0 (Linux Foundation, March 2026) is the standard for agent-to-agent over
+  HTTP: signed agent cards, JSON-RPC, SSE streaming, HMAC-signed webhooks. Hermes
+  Agent implements it peer to peer with per-peer bearer tokens, a 5-turn ping-pong
+  cap, and a 60/min per-identity rate limit.
+- ah-cli (annals-ai, TypeScript, MIT, 2 stars, last push May 2026) is a daemon-first
+  local runtime that registers Claude/Codex agents and exposes them over A2A with a
+  local web UI. It *runs* agents rather than connecting sessions you already have
+  open; orchestration-shaped.
+- Nobody found does "connect the sessions I already have running, across tools, and
+  optionally to a teammate's." That gap is the premise.
+
+**LEANING: internal protocol is modelbus (threads, three tools); the federation
+boundary speaks A2A.** Do not invent a cross-machine wire protocol when a standard
+with identity, auth, streaming, and push exists and makes Hermes-style peers reachable
+for free. One adapter between the two protocols is cheaper than one protocol that must
+be both tiny and complete.
+
 Nothing here is built in v0 beyond the keypair-derived device id.
 
 ## 13. Code architecture sketch (LEANING)
@@ -516,6 +561,8 @@ priority order."
 - Pending-agent semantics: can a pending agent message anyone? What does deny do?
 - Contact policy default (`manual` vs `open`) and how pending threads look in the UI.
 - Whether the board is worth building at all, and when.
+- A2A at the federation boundary: confirm, and decide how modelbus threads map onto
+  A2A tasks/messages when the time comes.
 - Which hosts can support "jump to window" and "needs attention" signals.
 - Everything in section 11 marked untested.
 - What v0 actually includes. Leaning: register/sync, direct messages with thread
