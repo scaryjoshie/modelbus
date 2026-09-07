@@ -266,13 +266,43 @@ delivered, and a strategy that fails repeatedly for an agent is demoted.
 
 1. **Native push:** Claude Code cross-session messaging socket, OpenCode HTTP API,
    Claude Agent SDK streaming input, OpenClaw `sessions_send`.
-2. **Headless turn:** spawn or resume a turn: Codex `exec resume`, Goose run, Gemini
-   non-interactive. (Aside has its own path, section 11.)
-3. **Terminal injection:** tmux paste (bracketed paste into the agent's pane, only
-   after checking the pane's foreground process is the agent and not a bare shell),
-   then iTerm2 / Terminal.app write-to-tab via AppleScript (does not raise the window).
+2. **Headless turn:** spawn or resume a turn: Goose run, Gemini non-interactive.
+   (Aside has its own path, section 11.) **Codex now has a native queue path** and
+   belongs in tier 1: `codex queue --thread <uuid|name> --message "..."` is an official
+   subcommand (v0.153) that calls `thread/queue/add` on the local app-server daemon or
+   an embedded one, which writes to the shared `~/.codex/queue_1.sqlite`; running TUIs
+   watch a revision table and pick up items for their thread. The app-server API also
+   documents `turn/start` and `turn/steer`. Live pid -> thread id comes from the
+   rollout file or thread-writer lock the process holds open. (`~/.codex/ipc/ipc.sock`
+   is unrelated: it fetches IDE context for the TUI's `/ide` command.)
+3. **Terminal injection (last resort, inherently terminal-specific):** macOS gives a
+   normal user no way to type into another process's tty (TIOCSTI returns EACCES;
+   tested 2026-09-06), so every terminal that supports this does it through its own
+   socket or scripting API. Supported set stays small: a pty that modelbus owns
+   (`modelbus run <host>`, terminal-agnostic for launched sessions), cmux `send`
+   (Joshua's terminal; socket CLI with `send`, `send-key`, `read-screen`,
+   `focus-pane`), tmux send-keys, maybe iTerm2/Terminal.app AppleScript. Only after
+   checking the foreground process is the agent, not a bare shell. Anything else is
+   pull-only and the UI says so. Injected text must be wrapped so it cannot be
+   mistaken for a direct user instruction (provenance, section 14).
 4. **Hook piggyback:** for hosts with lifecycle hooks, the next hook drains the inbox.
 5. **Pull only:** wait for the agent's next `sync`.
+
+**Queue is the default; steer and inject are optional upgrades (Joshua, 2026-09-06).**
+A message is queued for the recipient's next turn. A sender may ask for an upgrade to
+*steer* (interrupt or adjust the active turn) or *inject* (terminal input), and the
+upgrade happens only if the recipient's provider supports it. Most traffic is plain
+queueing.
+
+**Adapters are wake signals, not message carriers (from the Codex review, section 14).**
+The message is stored once in the bus. What an adapter delivers is "you have mail"
+(optionally carrying the body as a convenience, keyed by message id so a duplicate is
+harmless). This makes falling through the cascade safe: two wake signals for one
+message cannot make the agent act twice, because receipt is the agent's cursor
+advancing past the message, not the adapter reporting success. Track four states
+separately: stored, wake attempted (which adapter), receipt confirmed (cursor), reply
+received. Never claim more than the state supports. Claude Code Channels explicitly
+does not acknowledge processing, which is why this matters.
 
 **Priority decides how far down the chain to go.** Normal priority stops at tier 5.
 Wake priority tries 1 through 3. A normal-priority message may get a delayed push
@@ -281,8 +311,9 @@ Wake priority tries 1 through 3. A normal-priority message may get a delayed pus
 Excluded under the hidden constraint: System Events keystrokes, notifications, anything
 that opens or raises a window.
 
-First adapters to build (LEANING): tmux paste (universal, dumb, proven), then Claude
-Code socket and Agent SDK stream, then OpenCode HTTP.
+First adapters to build (LEANING, revised 2026-09-06 after inspecting the machine):
+Codex `queue` and Claude Code's socket (both native, terminal-agnostic), then Aside
+routines, then the pty launcher. cmux/tmux injection only as a fallback.
 
 ---
 
@@ -559,7 +590,45 @@ The provider interface is the extensibility point: adding a host is one director
 The delivery cascade (section 5) is just "ask each provider that claims this agent, in
 priority order."
 
-## 14. Open questions (collected)
+## 14. Review by a Codex session (2026-09-06)
+
+Joshua ran a parallel Codex session (GPT-6, thread `01a0789c…`) over the same notes.
+Its critique was good; the points worth carrying:
+
+- **Delivery certainty.** Cascading adapters on "failed to report success" risks
+  double delivery. Fix adopted in section 5: store once, adapters are wake signals,
+  track stored / wake attempted / receipt / reply as separate states.
+- **Session identity binding.** How does the daemon know *which conversation* called
+  `sync()`? Two sessions in the same repo with the same MCP config, or a host sharing
+  one MCP connection across conversations, could merge inboxes. A friendly name and a
+  reclaim token do not solve this. LEANING: a per-session stdio shim spawned by the
+  host, connected to the daemon over a unix socket, identified by walking the shim's
+  parent process chain to the host pid and its registry entry. **Acceptance test:
+  two sessions in one repository stay distinct.**
+- **Loop guards do not stop unique-message ping-pong.** A asks, B answers and asks,
+  forever, every message unique and under the rate limit. Add a **bounded number of
+  automatic wakes per thread**, after which messages still store but do not wake, and
+  the UI shows the pause. Also: `send(wait)` keeps the sender's turn active while the
+  busy-guard holds delivery during active turns; the awaited reply must return through
+  the pending tool call, not through a wake.
+- **Do not double-gate.** Requiring approval for placement *and* for new threads
+  recreates the friction modelbus exists to remove. A user introduction is enough
+  permission for that collaboration. Contact policy (section 4) should read that way.
+- **Provenance.** A message from Aside must arrive visibly attributed to Aside;
+  pasted terminal text especially can look like a user instruction. Introducing two
+  agents must not let either grant permissions on Joshua's behalf.
+- **Liveness vs. activity.** Keep "confirmed live / uncertain / ended" separate from
+  "working / idle / needs attention / unknown"; record evidence source and last check;
+  never let saved history look live; one process can own several threads (Codex
+  sub-agents), so distinguish process from conversation.
+- Its proposed acceptance list for the detector: start/exit updates roster within
+  seconds; two sessions in one directory stay distinct; idle sessions remain; stale
+  registry files don't show as live; rename preserves identity; multi-thread
+  processes are represented honestly; discovery causes no focus change or agent turn.
+- It would defer A2A alignment and device-key identity until a concrete federation
+  need. Reasonable for v0 scope; the field-naming choice is still cheap either way.
+
+## 15. Open questions (collected)
 
 - Filesystem hierarchy vs. buses (section 8), and whether threads resolve the log
   concern.
