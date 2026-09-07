@@ -628,7 +628,37 @@ Its critique was good; the points worth carrying:
 - It would defer A2A alignment and device-key identity until a concrete federation
   need. Reasonable for v0 scope; the field-naming choice is still cheap either way.
 
-## 15. Open questions (collected)
+## 15. Experiment log
+
+### 2026-09-06: Claude Code <-> Codex round trip (both directions work)
+
+- **Claude -> Codex** via `codex queue --thread <uuid> --message ...` from a Bash call
+  in Claude Code session `modelbus-8f`. The row appeared in `~/.codex/queue_1.sqlite`
+  and was consumed within seconds; the message rendered in the Codex TUI as a normal
+  user turn (with the provenance label first), and a turn started on its own. No
+  prompt, no focus change. Clean.
+- **Codex -> Claude** via the Claude Code inbox socket (`/tmp/cc-socks/<pid>.sock`,
+  one JSON line `{"type":"user","message":{"role":"user","content":"..."}}`). Two
+  gates fired, both by design:
+  1. Codex's sandbox blocked the Unix socket connect; Codex asked Joshua for a
+     one-time escalation in its own TUI.
+  2. Claude Code **held** the message with an approval dialog ("sender did not attest
+     its permission mode, and this session bypasses permission prompts"). Joshua
+     approved; the message was delivered with a system note that it came from another
+     session and cannot grant permissions.
+- Lesson for the Claude Code provider: unattended delivery without dialogs should use
+  the **own-child path**: a small poller spawned by the session's SessionStart hook
+  inherits `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, pulls
+  from the modelbus daemon for that agent, and posts to its own session's socket with
+  the auth line. Verified own-child messages are delivered even in bypass mode. The
+  alternative (`crossSessionInbound: accept`) is a blunt per-session setting.
+- Lesson for the Codex provider: Codex-side sends need a modelbus CLI that Codex is
+  allowed to run (approved prefix rule) or a saved escalation rule; raw socket
+  connects from inside its sandbox will always prompt.
+- Both hosts' inbound paths keep provenance visible and refuse to treat a peer message
+  as user approval, which matches section 14's provenance requirement.
+
+## 16. Open questions (collected)
 
 - Filesystem hierarchy vs. buses (section 8), and whether threads resolve the log
   concern.
