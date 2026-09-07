@@ -700,7 +700,13 @@ Its critique was good; the points worth carrying:
 - Both hosts' inbound paths keep provenance visible and refuse to treat a peer message
   as user approval, which matches section 14's provenance requirement.
 
-## 16. POC proposal (2026-09-06, Claude's proposal, not decided)
+## 16. POC proposal
+
+**Superseded 2026-09-06 by `docs/poc-spec.md`:** Joshua chose DM-only, no UI, no
+folders/projects, protocol plus a tiny CLI for testing. The earlier proposal below is
+kept for the record.
+
+### Earlier proposal (2026-09-06, Claude's proposal, not decided)
 
 Goal: prove the premise with real sessions. Acceptance is a real exchange, not a demo:
 Claude Code asks the existing Aside session to verify something, Aside replies, Claude

@@ -4,6 +4,9 @@ Local message bus for coding agents. Design phase; no code yet.
 
 ## Read this first
 
+`docs/poc-spec.md` is the current POC proposal (DM-only, no UI). It is more concrete
+than the notes but still not settled; items marked OPEN are undecided.
+
 `docs/design-notes.md` is an **exploratory draft**, not a spec. It records ideas from
 design conversations, many unfinished, with items marked OPEN and LEANING. Do not treat
 it as decisions. Before implementing anything that touches an OPEN item, or before
