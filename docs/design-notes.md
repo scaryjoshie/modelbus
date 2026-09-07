@@ -401,10 +401,22 @@ graph, **not the disk**. It has two node types: *folders* (containers) and *agen
 A path like `/modelbus/backend/codex-1` is a modelbus address and has no relation to
 any directory on the computer. Every agent has exactly one home path.
 
-**Revised 2026-09-06: the hierarchy is out of the communication model entirely.**
-Groups do everything folder-addressing was for (announcements = a muted group everyone
-in a project is in). If a tree ever exists it is a UI grouping for the user's eyes
-with zero effect on who receives what. The text below is kept for the record.
+**Revised 2026-09-06: folders are an organization overlay, not part of messaging.**
+- Folders live on top of the core messaging system and are not a dependency of it.
+  The user can create subfolders and move agents; an orchestrator (if any) can do the
+  same; agents can see the folder structure but it changes nothing about delivery.
+- Groups do everything folder-addressing was for (an announcement = a muted group).
+- **Groups auto-scope to the lowest common folder of their members** for display: a
+  deployment subfolder holding three agents shows their group chat inside that folder.
+  A group spanning two projects lands at their common ancestor (root).
+- **Projects** = top-level folders with a scope flag: agents inside see only each
+  other by default and do not communicate outside the project by default. Scoping is
+  *default visibility*, not a wall: an explicit group can include agents from two
+  projects. Default for a new agent is *no project* (root), so onboarding never
+  requires placement; scoping only starts when the user creates a project and moves
+  agents in. LEANING that this keeps friction near zero; revisit if it doesn't.
+
+The text below is the earlier exploration, kept for the record.
 
 **The tree is optional and the default is flat (LEANING).** Every agent sits at the
 root until the user makes a folder; if you never make one, you never see a tree. The
@@ -486,6 +498,19 @@ in v0.
 
 Join events go to a lobby address the user (and any orchestrator) can watch; other
 agents are not pinged about joins. Pending placement requests (section 7) surface here.
+
+**UI vision (Joshua, 2026-09-06; beyond POC scope, recorded for direction):**
+- Layout like VS Code: a folder tree on the left showing projects, subfolders, agents,
+  and the group chats scoped into them; a conversation view in the middle; an input so
+  the user can type into DMs and channels as a participant.
+- A view picker: *folder mode* (the tree), *by provider* (Claude Code / Codex / Aside
+  / ...), and *flat*.
+- *Scope to a folder*: the graph shows only agents in that folder, with their
+  external connections drawn to the edge.
+- Per-agent message view: everything involving one agent, across DMs and groups. This
+  is a query over conversations, cheap to build.
+- Joshua does not want this to become an agent-management UI, but accepts it may
+  drift that way if it helps. The core stays comms.
 
 **UI helpers for the user (LEANING, feasibility varies by host):**
 - *Jump to the agent's window.* From the UI, focus the terminal pane or browser tab an
@@ -675,7 +700,37 @@ Its critique was good; the points worth carrying:
 - Both hosts' inbound paths keep provenance visible and refuse to treat a peer message
   as user approval, which matches section 14's provenance requirement.
 
-## 16. Open questions (collected)
+## 16. POC proposal (2026-09-06, Claude's proposal, not decided)
+
+Goal: prove the premise with real sessions. Acceptance is a real exchange, not a demo:
+Claude Code asks the existing Aside session to verify something, Aside replies, Claude
+follows up, the exchange stops on its own; nothing appears on screen; a daemon restart
+loses nothing; two Claude sessions in one repo stay distinct.
+
+Scope, in build order:
+1. **Daemon + store.** Bun, one SQLite file: agents, session bindings, conversations
+   (DM by pair, group by id + members), messages, deliveries, cursors. Listens on a
+   unix socket and localhost HTTP.
+2. **Protocol surface.** MCP server (streamable HTTP) with `sync`, `send`, `who`;
+   `modelbus` CLI with the same verbs plus `serve`, `scan`, `init`. Text output format
+   as in section 4. Guards: dedupe, per-sender rate limit, per-conversation wake
+   budget, 64 KB cap.
+3. **Identity binding.** A per-session stdio shim the host spawns; the daemon walks
+   the shim's parent chain to the host pid and binds the agent to that host session.
+4. **Providers.** Claude Code: registry detection (done), SessionStart hook that
+   spawns the own-child poster (delivers with the session token, no dialogs), `init`
+   writes hook + MCP entry + allow rule. Codex: lock/rollout detection, `codex queue`
+   wake, `init` writes MCP entry. Aside: detection (done), `init` writes MCP entry,
+   one heartbeat routine per session that should be reachable.
+5. **Minimal UI.** One page: list of agents and groups on the left, a conversation in
+   the middle, an input box so Joshua can type as a participant. No graph, no folders.
+6. **Experiments folded in:** the Aside heartbeat/MCP test; the two-sessions-one-repo
+   test; the restart test.
+
+Out of POC: folders/projects, view picker, graph, board, contact policy, orchestrator,
+federation, pty launcher, cmux/tmux injection, steer upgrades.
+
+## 17. Open questions (collected)
 
 - Filesystem hierarchy vs. buses (section 8), and whether threads resolve the log
   concern.
