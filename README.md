@@ -18,4 +18,19 @@ Most coding-agent hosts (Claude Code, Codex CLI, Cursor, Gemini CLI, OpenCode, G
 
 ## Status
 
-Design phase. No code yet.
+Design phase, with one working piece: a live-session detector.
+
+```
+bun install
+bun run scan          # table of every agent session on this machine
+bun run scan --json
+```
+
+`scan` finds Claude Code sessions (from their on-disk registry), Codex and other
+terminal hosts (from the process table), and Aside browser sessions (from its local
+daemon), then maps each terminal session to its cmux workspace and surface. The
+`reach` column says how a message could be delivered to each session:
+`claude-socket` (Claude Code's messaging socket), `aside-mcp` (Aside as MCP client +
+routine wake), `cmux-send` (text injection into its terminal surface), or `pull-only`.
+
+Design notes live in `docs/design-notes.md` and are explicitly drafts, not decisions.
