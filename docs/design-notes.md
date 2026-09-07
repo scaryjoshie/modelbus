@@ -157,28 +157,37 @@ few hundred tokens; twenty is a problem. Richer operations belong in the CLI.
 Design principle: **the model-facing schema is tiny; everything else is internal.**
 Models should never set hop counts, TTLs, idempotency keys, or priority tiers.
 
-### Model-facing tools (three)
+### Model-facing tools (three) — revised 2026-09-06: conversations, not threads
 
-- `sync(wait?)` — registration on first call; returns new messages and roster changes
-  since the agent's cursor; long-polls up to `wait` seconds; one word when idle.
-- `send(body, to? | thread?, wake?, wait?)` — `to` is one or more agent names (creates
-  a thread); `thread` replies into an existing thread (recipients implied); `to` +
-  `thread` together adds a participant. `wake: true` requests wake-priority delivery.
-  `wait: N` blocks up to N seconds for a reply in that thread and returns it, which is
-  the ask-and-wait pattern for one-to-one questions.
-- `who(filter?)` — roster for the agent's scope, one line per agent, optionally
-  filtered by name, host, path, or `about` text.
+**Superseded:** the earlier thread-id design (models reply by `[t_k3f]` handles). It
+risked handle sprawl. Replaced by the chat-app model: **one conversation per
+participant set.** A *DM* is the single conversation between two agents, forever. A
+*group* is a named conversation with members. Models never see a conversation id.
 
-Possibly later: `read(thread | path)` for history. Could be a `sync` option.
+- `sync(scope?, all?, wait?)` — registration on first call. Returns what is new for me:
+  DMs in full, groups as a one-line digest with @mentions of me in full. `scope` is an
+  agent name or `#group` to read just that conversation; `all: true` returns recent
+  history instead of only new. Long-polls up to `wait`. One word when idle. A line
+  cap with "more" so no call can flood context.
+- `send(to, body, wake?, wait?)` — `to` is an agent name (continues the DM), a
+  `#group`, or a list of names (creates a group on the fly with an auto name that can
+  be renamed). `wake` requests louder delivery if the provider allows. `wait: N`
+  blocks for the next reply in that conversation and returns it inline.
+- `who(filter?)` — agents and groups in scope, one line each; a resolver for "the
+  browser", "the Codex in this repo".
+
+**Wake defaults:** DM = queue-wake. Group = muted (delivered on next sync, no wake).
+`@name` inside a group message wakes that member. Explicit `wake` overrides either.
+
+Optional, never required: quote-reply to a message id for the rare sub-topic case.
 
 ### What the model reads
 
-One line per message, thread id visible so it can reply:
-
 ```
-[t_k3f] aside-1 -> you (wake): Deploy verified; login page 500s on Safari. Screenshot at ~/aside/tasks/8Mq/shot.png
-[t_k3f] you -> aside-1: Thanks. Which endpoint 500s?
-+ codex-2 joined at /dev/modelbus "implementing tmux adapter"
+aside-1: Deploy verified; login page 500s on Safari. Screenshot at ~/aside/tasks/8Mq/shot.png
+#deploy: 3 new, 1 mentions you
+  codex-2: @claude-1 can you check the auth migration?
++ codex-2 joined, ~/dev/modelbus
 ```
 
 No JSON in text output. Structured content can go in MCP's structured field for hosts
@@ -204,18 +213,21 @@ Internal: id, thread_id, from_agent_id, created_at, delivered_at per recipient,
 delivery strategy used, expires_at for undelivered wakes, dedupe hash. Hop counter only
 matters once relaying exists; not in v0.
 
-### Thread model
+### Conversation model
 
-A thread has participants and messages. `send(to: ["a","b"])` creates a three-party
-thread. Replying by thread id means the model never re-specifies recipients. Adding a
-participant is `send(thread, to: "c", body)`. Thread ids are short (4–5 chars).
+A conversation = participants + an append-only message log. DM key = the unordered
+pair of agent ids; group key = group id with a member list. Adding a member to a group
+is a membership change, not a new conversation. Internally messages still carry a
+conversation id; the model just never needs it. Conversations are also the unit of
+replication for P2P/cloud (section 12): two daemons sharing a DM replicate only that
+DM; a group replicates among its members' daemons (Matrix-room style).
 
 ### Ergonomics check
 
 Walk through as a Claude Code session: start → `sync()` says who you are and what is
 waiting. Need the browser → `who("browser")` → `send(to: "aside-1", body, wait: 120)`
-returns Aside's answer inline. Follow up → `send(thread: "t_k3f", body)`. Nothing else
-to learn. OPEN whether this holds up for Aside's side, whose "turn" is a routine wake.
+returns Aside's answer inline. Follow up → `send(to: "aside-1", body)`. Nothing else
+to learn, and no ids to remember. OPEN whether this holds up for Aside's side, whose "turn" is a routine wake.
 
 ### Discovery is user-routed (LEANING)
 
@@ -388,6 +400,11 @@ be independent; cross-repo work should be linkable).
 graph, **not the disk**. It has two node types: *folders* (containers) and *agents*.
 A path like `/modelbus/backend/codex-1` is a modelbus address and has no relation to
 any directory on the computer. Every agent has exactly one home path.
+
+**Revised 2026-09-06: the hierarchy is out of the communication model entirely.**
+Groups do everything folder-addressing was for (announcements = a muted group everyone
+in a project is in). If a tree ever exists it is a UI grouping for the user's eyes
+with zero effect on who receives what. The text below is kept for the record.
 
 **The tree is optional and the default is flat (LEANING).** Every agent sits at the
 root until the user makes a folder; if you never make one, you never see a tree. The
