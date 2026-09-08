@@ -138,6 +138,21 @@ the first turn, hence the follow-the-host naming policy.
 - `init` covers all three hosts. Claude Code and Codex prompts: none after init
   except Codex's one-time per-tool "Always allow".
 
+### Zero-interaction setup findings (2026-09-08)
+
+- **Codex first-use prompt is a config setting.** "Always allow" writes
+  `mcp_servers.<server>.tools.<tool>.approval_mode = "approve"` to config.toml
+  (codex-rs/core/src/mcp_tool_call.rs). `init` now writes it for send/who/sync, so a
+  fresh Codex session never asks. Sessions started before init keep prompting until
+  restarted.
+- **Aside offers a server's tools only once `mcp.inventories.<name>` is cached** in the
+  same settings file (its settings screen builds it by connecting once). `init` now
+  writes the inventory with our tool schemas alongside the server entry. Aside reads
+  settings at startup; a restart is needed after init. Verified: an Aside session then
+  replied through the modelbus `send` tool ("hello from aside via mcp" arrived).
+- All three hosts now complete inbound delivery and outbound reply with no per-message
+  interaction. Remaining one-time steps are `init --write` and host restarts.
+
 ## 1. Goal
 
 Prove the premise: two of Joshua's existing agent sessions exchange messages through

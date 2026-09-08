@@ -133,21 +133,53 @@ export class AsideAdapter implements HostAdapter {
         MODELBUS_NAME: account === 0 ? "aside" : `aside-${account}`,
       },
     });
+    // Aside only offers a server's tools once `mcp.inventories.<name>` holds a cached
+    // tool list (its settings screen builds it by connecting once). Write ours too.
+    const inventory = {
+      tools: [
+        {
+          name: "send",
+          description:
+            "Send a direct message to another agent on this machine by name. Optionally wait up to N seconds for its reply.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              to: { type: "string", description: "recipient agent name, as shown by who" },
+              body: { type: "string", description: "message text" },
+              wait: { type: "integer", minimum: 0, maximum: 600 },
+            },
+            required: ["to", "body"],
+          },
+        },
+        {
+          name: "who",
+          description:
+            "List agents on this machine's message bus. Optional substring filter on name, host, or directory.",
+          inputSchema: { type: "object", properties: { filter: { type: "string" } } },
+        },
+      ],
+      refreshedAt: new Date().toISOString(),
+    };
     return {
       describe: targets.map(
         (a) =>
-          `Aside (~/.aside/u/${a}/settings.json): merge mcp.servers.modelbus = ${JSON.stringify(entryFor(a))}`,
+          `Aside (~/.aside/u/${a}/settings.json): merge mcp.servers.modelbus = ${JSON.stringify(entryFor(a))} and its tool inventory`,
       ),
       apply: async () => {
         const done: string[] = [];
         for (const a of targets) {
           const path = join(usersDir(), String(a), "settings.json");
           const s = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-          const mcp = (s.mcp ??= {}) as { servers?: Record<string, unknown> };
+          const mcp = (s.mcp ??= {}) as {
+            servers?: Record<string, unknown>;
+            inventories?: Record<string, unknown>;
+          };
           mcp.servers ??= {};
+          mcp.inventories ??= {};
           mcp.servers.modelbus = entryFor(a);
+          mcp.inventories.modelbus = inventory;
           writeFileSync(path, `${JSON.stringify(s, null, 2)}\n`);
-          done.push(`aside u/${a}: wrote mcp.servers.modelbus`);
+          done.push(`aside u/${a}: wrote mcp.servers.modelbus + inventory`);
         }
         return done;
       },

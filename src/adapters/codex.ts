@@ -106,6 +106,7 @@ export class CodexAdapter implements HostAdapter {
         plan.present
           ? `Codex (${plan.configPath}): already configured`
           : `Codex (${plan.configPath}): run ${plan.mcpCommand.join(" ")}`,
+        `Codex (${plan.configPath}): pre-approve tools send/who/sync (approval_mode = "approve")`,
       ],
       apply: () => codexInitWrite(plan),
     };
