@@ -63,6 +63,28 @@
 - **`init`** is dry-run by default; `--write` merges the allow rule and SessionStart
   hook into `~/.claude/settings.json` and runs `claude mcp add -s user`. Not run.
 
+### Milestone 3 implemented (2026-09-08, Claude session): Codex
+
+- **Detection** maps a Codex pid to its threads via the open lock files, then
+  classifies each with Codex's state DB (`threads.thread_source` = user | subagent,
+  `source` JSON carries `parent_thread_id`), falling back to the rollout header. A
+  process holding exactly one lock is a root by construction (subagents run inside
+  the parent's process next to the parent's lock); that covers brand-new sessions
+  with no state row. Codex auto-names threads (`threads.name`), so most sessions
+  get stable human names; unnamed roots are numbered by creation order.
+- **Delivery** = `codex queue --thread <id> --message <text>`. Verified through the
+  daemon: rendered provenance line intact, turn started, no prompt on either side.
+- **Limitation:** `codex queue` fails with "no rollout found" for a session that has
+  never had a turn. Such sessions are shown as pull-only with a note.
+- **Receipt** = rollout `response_item` user message containing the marker.
+- **Roster + auto-bind.** `who` now merges bound agents with live sessions the
+  scanner sees (marked `unbound`). `send` to an unbound session binds it on the spot
+  using the host's own session id, so any identifiable live session is addressable
+  without it having contacted the bus first. Claude Code sessions reached this way
+  get an unattested post (held in bypass mode) until they attach.
+- **Shim identity** also resolves Codex sessions by ancestor pid. Not yet tested
+  from inside Codex (needs the MCP entry in `~/.codex/config.toml`; `init` prints it).
+
 ## 1. Goal
 
 Prove the premise: two of Joshua's existing agent sessions exchange messages through

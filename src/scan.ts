@@ -1,12 +1,20 @@
 import { aside } from "./providers/aside.ts";
 import { claudeCode } from "./providers/claude-code.ts";
+import { codex } from "./providers/codex.ts";
 import { processScan } from "./providers/process-scan.ts";
 import { cmuxSurfacesByTty } from "./terminals/cmux.ts";
 import type { LiveSession, Provider, Reach } from "./types.ts";
 
-const PROVIDERS: Provider[] = [claudeCode, processScan, aside];
+const PROVIDERS: Provider[] = [claudeCode, codex, processScan, aside];
 
-const REACH_ORDER: Reach[] = ["claude-socket", "aside-mcp", "cmux-send", "tmux-paste", "pull-only"];
+const REACH_ORDER: Reach[] = [
+  "claude-socket",
+  "codex-queue",
+  "aside-mcp",
+  "cmux-send",
+  "tmux-paste",
+  "pull-only",
+];
 
 /**
  * Run every provider, attach terminal locations by tty, and finalize reach.

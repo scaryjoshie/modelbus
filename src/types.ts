@@ -22,6 +22,7 @@ export type HostKind =
 /** How the daemon could deliver a message into this session. Ordered best-first. */
 export type Reach =
   | "claude-socket" // Claude Code cross-session messaging socket
+  | "codex-queue" // official `codex queue --thread` into a running TUI
   | "aside-mcp" // Aside as MCP client + heartbeat/event routine
   | "cmux-send" // cmux `send --surface` text injection
   | "tmux-paste" // tmux send-keys (not installed here yet)

@@ -144,7 +144,8 @@ describe("persistence", () => {
   test("daemon over unix socket: send, pull, who, log; survives restart", async () => {
     const unix = join(dir, "d.sock");
     const path = join(dir, "d.db");
-    let d = createDaemon({ store: new Store(path), unix });
+    const noScan = async () => [];
+    let d = createDaemon({ store: new Store(path), unix, scanFn: noScan });
     const alice = { kind: "cli", as: "alice" } as const;
     const bob = { kind: "cli", as: "bob" } as const;
     await rpc("bind", {}, bob, unix);
@@ -160,7 +161,7 @@ describe("persistence", () => {
     expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
     d.stop();
 
-    d = createDaemon({ store: new Store(path), unix });
+    d = createDaemon({ store: new Store(path), unix, scanFn: noScan });
     const pulled = await rpc<{ items: Array<{ body: string }> }>("pull", {}, bob, unix);
     expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
     const log = await rpc<{ rows: Array<{ received_at: number | null }> }>(

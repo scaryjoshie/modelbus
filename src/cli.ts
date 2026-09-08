@@ -125,12 +125,28 @@ async function main() {
       return;
     }
     case "who": {
-      const r = await rpc<{ agents: Agent[] }>("who", { filter: rest[0] });
+      const r = await rpc<{
+        agents: Array<{
+          name: string;
+          host: string;
+          state: string;
+          cwd?: string;
+          status?: string;
+          lastSeen?: number;
+        }>;
+      }>("who", { filter: rest[0] });
       if (!r.agents.length) return console.log("nobody");
       console.log(
         table(
-          r.agents.map((a) => [a.name, a.host, a.state, age(a.last_seen)]),
-          ["name", "host", "state", "last-seen"],
+          r.agents.map((a) => [
+            a.name,
+            a.host,
+            a.state,
+            a.status ?? "",
+            shortCwd(a.cwd),
+            age(a.lastSeen),
+          ]),
+          ["name", "host", "state", "status", "cwd", "last-seen"],
         ),
       );
       return;
@@ -192,15 +208,22 @@ async function main() {
     }
     case "init": {
       const { claudeInitPlan, claudeInitWrite } = await import("./providers/claude-code-setup.ts");
+      const { codexInitPlan, codexInitWrite } = await import("./providers/codex-setup.ts");
       const plan = claudeInitPlan();
+      const cplan = codexInitPlan();
       console.log(`Claude Code (${plan.settingsPath}):`);
       console.log(`  merge: ${JSON.stringify(plan.settingsPatch)}`);
       console.log(`  run:   ${plan.mcpCommand.join(" ")}`);
+      console.log(`Codex (${cplan.configPath}):`);
+      console.log(
+        cplan.present ? "  already configured" : `  run:   ${cplan.mcpCommand.join(" ")}`,
+      );
       if (!rest.includes("--write")) {
         console.log("\ndry run; pass --write to apply");
         return;
       }
       for (const line of await claudeInitWrite(plan)) console.log(`  ${line}`);
+      for (const line of await codexInitWrite(cplan)) console.log(`  ${line}`);
       return;
     }
     default:

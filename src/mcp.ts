@@ -5,6 +5,7 @@ import { type Identity, rpc } from "./client.ts";
 import type { Agent, InboxItem } from "./core/store.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { findClaudeSession } from "./hostid.ts";
+import { codexDisplayNames, findCodexSession } from "./providers/codex.ts";
 
 /**
  * The stdio shim: a complete MCP server that a host spawns per session. It works
@@ -30,6 +31,20 @@ async function resolveIdentity(): Promise<{ identity: Identity; label: string }>
         evidence: `ancestor pid ${claude.pid}`,
       },
       label: claude.name,
+    };
+  }
+  const codexSession = await findCodexSession();
+  if (codexSession) {
+    const name = codexDisplayNames([codexSession.thread]).get(codexSession.thread.id) ?? "codex-1";
+    return {
+      identity: {
+        kind: "binding",
+        host: "codex",
+        ref: codexSession.thread.id,
+        name,
+        evidence: `ancestor pid ${codexSession.pid}`,
+      },
+      label: name,
     };
   }
   const as = process.env.MODELBUS_AS;
@@ -111,10 +126,14 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
-      const r = await rpc<{ agents: Agent[] }>("who", { filter });
+      const r = await rpc<{
+        agents: Array<{ name: string; host: string; state: string; cwd?: string }>;
+      }>("who", { filter });
       const lines = r.agents
         .filter((a) => a.name !== me)
-        .map((a) => `${a.name}  ${a.host}  ${a.state}`);
+        .map((a) =>
+          `${a.name}  ${a.host}  ${a.cwd ?? ""}  ${a.state === "unbound" ? "(not yet on the bus)" : ""}`.trim(),
+        );
       return {
         content: [
           { type: "text", text: lines.length ? lines.join("\n") : "nobody else is on the bus" },

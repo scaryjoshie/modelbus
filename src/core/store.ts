@@ -200,8 +200,10 @@ export class Store {
 
   private freeName(preferred: string): string {
     if (!this.agentByName(preferred)) return preferred;
-    for (let n = 2; n < 1000; n++) {
-      const candidate = `${preferred}-${n}`;
+    const m = preferred.match(/^(.*)-(\d+)$/);
+    const base = m ? (m[1] as string) : preferred;
+    for (let n = m ? Number(m[2]) + 1 : 2; n < 1000; n++) {
+      const candidate = `${base}-${n}`;
       if (!this.agentByName(candidate)) return candidate;
     }
     return `${preferred}-${newId()}`;

@@ -5,6 +5,9 @@ import { z } from "zod";
 import { Api, ApiError } from "./core/api.ts";
 import { Store } from "./core/store.ts";
 import { ClaudeCodeWake } from "./providers/claude-code-wake.ts";
+import { CodexWake } from "./providers/codex-wake.ts";
+import { Roster } from "./roster.ts";
+import type { LiveSession } from "./types.ts";
 
 /**
  * The daemon: one Store, one Api, one HTTP-over-unix-socket endpoint.
@@ -44,11 +47,15 @@ const Request = z.object({
   identity: Identity.optional(),
 });
 
-export function createDaemon(opts: { store?: Store; unix?: string } = {}) {
+export function createDaemon(
+  opts: { store?: Store; unix?: string; scanFn?: () => Promise<LiveSession[]> } = {},
+) {
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store);
   const claudeWake = new ClaudeCodeWake(api);
   api.registerProvider(claudeWake);
+  api.registerProvider(new CodexWake(api));
+  const roster = new Roster(api, opts.scanFn);
   const unix = opts.unix ?? socketPath();
   mkdirSync(join(unix, ".."), { recursive: true });
   if (existsSync(unix)) unlinkSync(unix);
@@ -121,6 +128,8 @@ export function createDaemon(opts: { store?: Store; unix?: string } = {}) {
             const p = z
               .object({ to: z.string(), body: z.string(), wait: z.number().optional() })
               .parse(params);
+            // A detected-but-unbound live session becomes addressable on first send.
+            await roster.resolveOrBind(p.to);
             const r = await api.send({ fromId, ...p });
             return Response.json(r);
           }
@@ -137,7 +146,10 @@ export function createDaemon(opts: { store?: Store; unix?: string } = {}) {
           }
           case "who": {
             const p = z.object({ filter: z.string().optional() }).parse(params);
-            return Response.json({ agents: api.who(p.filter) });
+            const entries = (await roster.list(p.filter)).map(
+              ({ agent: _a, session: _s, ...e }) => e,
+            );
+            return Response.json({ agents: entries });
           }
           case "log": {
             const p = z

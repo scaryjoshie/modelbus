@@ -1,9 +1,10 @@
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import type { Api, WakeProvider } from "../core/api.ts";
 import type { Agent, Message } from "../core/store.ts";
 import { cliPath } from "../ensure.ts";
 import { findClaudeSessionById } from "../hostid.ts";
+import { watchTranscript } from "./watch.ts";
 
 /**
  * Delivers into a Claude Code session by posting to its inbox socket.
@@ -36,7 +37,7 @@ const WATCH_TIMEOUT_MS = 15 * 60 * 1000;
 export class ClaudeCodeWake implements WakeProvider {
   readonly host = "claude-code";
   private readonly sessions = new Map<string, Attached>();
-  private readonly watchers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly watchers = new Map<string, () => void>();
 
   constructor(private readonly api: Api) {}
 
@@ -70,36 +71,19 @@ export class ClaudeCodeWake implements WakeProvider {
     return target.token ? "posted" : "posted-unattested";
   }
 
-  /** Poll the transcript until a queue-operation remove for this message appears. */
   private watchReceipt(transcriptPath: string, messageId: string, agentId: string): void {
     const key = `${agentId}:${messageId}`;
     if (this.watchers.has(key)) return;
-    let offset = existsSync(transcriptPath) ? statSync(transcriptPath).size : 0;
-    const started = Date.now();
-    const marker = `#${messageId}`;
-    const timer = setInterval(() => {
-      if (Date.now() - started > WATCH_TIMEOUT_MS) return stop();
-      if (!existsSync(transcriptPath)) return;
-      const size = statSync(transcriptPath).size;
-      if (size <= offset) return;
-      const fd = openSync(transcriptPath, "r");
-      const buf = Buffer.alloc(size - offset);
-      readSync(fd, buf, 0, buf.length, offset);
-      closeSync(fd);
-      offset = size;
-      for (const line of buf.toString("utf8").split("\n")) {
-        if (!line.includes(marker)) continue;
-        if (isDeliveredEntry(line)) {
-          this.api.store.markReceived([messageId], agentId);
-          return stop();
-        }
-      }
-    }, WATCH_INTERVAL_MS);
-    const stop = () => {
-      clearInterval(timer);
-      this.watchers.delete(key);
-    };
-    this.watchers.set(key, timer);
+    const stop = watchTranscript({
+      path: transcriptPath,
+      marker: `#${messageId}`,
+      accept: isDeliveredEntry,
+      onFound: () => {
+        this.api.store.markReceived([messageId], agentId);
+        this.watchers.delete(key);
+      },
+    });
+    this.watchers.set(key, stop);
   }
 }
 

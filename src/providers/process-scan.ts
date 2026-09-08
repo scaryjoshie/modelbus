@@ -7,7 +7,6 @@ import { cwdOf, listProcesses } from "../util/ps.ts";
  * Only processes attached to a tty count; that filters helper daemons.
  */
 const EXE_TO_HOST: Record<string, HostKind> = {
-  codex: "codex",
   gemini: "gemini",
   opencode: "opencode",
   goose: "goose",
