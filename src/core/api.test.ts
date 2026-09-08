@@ -8,11 +8,22 @@ import { Api, ApiError } from "./api.ts";
 import { GUARDS } from "./guards.ts";
 import { Store } from "./store.ts";
 
+function bindTest(store: Store, key: string, name: string) {
+  return store.bind({
+    host: "test",
+    key,
+    handle: { key },
+    durability: "session",
+    preferredName: name,
+    evidence: "test",
+  });
+}
+
 function fresh() {
   const store = new Store(":memory:");
   const api = new Api(store);
-  const a = api.bind({ host: "test", hostSessionRef: "a", preferredName: "alice" });
-  const b = api.bind({ host: "test", hostSessionRef: "b", preferredName: "bob" });
+  const a = bindTest(store, "a", "alice");
+  const b = bindTest(store, "b", "bob");
   return { store, api, a, b };
 }
 
@@ -33,11 +44,11 @@ describe("dm basics", () => {
   });
 
   test("binding is identity; names de-duplicate", () => {
-    const { api, a } = fresh();
-    const again = api.bind({ host: "test", hostSessionRef: "a", preferredName: "whatever" });
+    const { store, a } = fresh();
+    const again = bindTest(store, "a", "alice");
     expect(again.id).toBe(a.id);
-    const clash = api.bind({ host: "test", hostSessionRef: "c", preferredName: "alice" });
-    expect(clash.name).toBe("alice-2");
+    const clash = bindTest(store, "c", "alice");
+    expect(clash.name).toBe("alice-2"); // same host name, different session: de-duplicated
   });
 
   test("unknown recipient and self-send are errors", async () => {
@@ -86,8 +97,8 @@ describe("waiting", () => {
   });
 
   test("send(wait) returns the reply and consumes only that DM", async () => {
-    const { api, a, b } = fresh();
-    const c = api.bind({ host: "test", hostSessionRef: "c", preferredName: "carol" });
+    const { store, api, a, b } = fresh();
+    const c = bindTest(store, "c", "carol");
     await api.send({ fromId: c.id, to: "alice", body: "unrelated from carol" });
     const pending = api.send({ fromId: a.id, to: "bob", body: "question?", wait: 5 });
     setTimeout(async () => {
@@ -103,8 +114,8 @@ describe("waiting", () => {
   });
 
   test("scoped pull leaves other DMs unreceived", async () => {
-    const { api, a, b } = fresh();
-    const c = api.bind({ host: "test", hostSessionRef: "c", preferredName: "carol" });
+    const { store, api, a, b } = fresh();
+    const c = bindTest(store, "c", "carol");
     await api.send({ fromId: a.id, to: "bob", body: "from alice" });
     await api.send({ fromId: c.id, to: "bob", body: "from carol" });
     const scoped = await api.pull({ agentId: b.id, scope: "carol" });
@@ -127,14 +138,14 @@ describe("persistence", () => {
     const path = join(dir, "t.db");
     let store = new Store(path);
     let api = new Api(store);
-    const a = api.bind({ host: "test", hostSessionRef: "a", preferredName: "alice" });
-    api.bind({ host: "test", hostSessionRef: "b", preferredName: "bob" });
+    const a = bindTest(store, "a", "alice");
+    bindTest(store, "b", "bob");
     await api.send({ fromId: a.id, to: "bob", body: "before restart" });
     store.close();
 
     store = new Store(path);
     api = new Api(store);
-    const b2 = api.bind({ host: "test", hostSessionRef: "b", preferredName: "bob" });
+    const b2 = bindTest(store, "b", "bob");
     const r = await api.pull({ agentId: b2.id });
     expect(r.items.map((i) => i.body)).toEqual(["before restart"]);
     expect((await api.pull({ agentId: b2.id })).items).toHaveLength(0);
@@ -144,8 +155,7 @@ describe("persistence", () => {
   test("daemon over unix socket: send, pull, who, log; survives restart", async () => {
     const unix = join(dir, "d.sock");
     const path = join(dir, "d.db");
-    const noScan = async () => [];
-    let d = createDaemon({ store: new Store(path), unix, scanFn: noScan });
+    let d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
     const alice = { kind: "cli", as: "alice" } as const;
     const bob = { kind: "cli", as: "bob" } as const;
     await rpc("bind", {}, bob, unix);
@@ -161,7 +171,7 @@ describe("persistence", () => {
     expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
     d.stop();
 
-    d = createDaemon({ store: new Store(path), unix, scanFn: noScan });
+    d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
     const pulled = await rpc<{ items: Array<{ body: string }> }>("pull", {}, bob, unix);
     expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
     const log = await rpc<{ rows: Array<{ received_at: number | null }> }>(

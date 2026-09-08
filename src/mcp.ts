@@ -9,9 +9,9 @@ import { codexDisplayNames, findCodexSession } from "./providers/codex.ts";
 
 /**
  * The stdio shim: a complete MCP server that a host spawns per session. It works
- * out which session it lives in (section 6 of the spec), then forwards `send` and
- * `who` to the daemon. `sync` is only registered with --with-sync, for hosts that
- * cannot receive automatically.
+ * out which session it lives in (spec section 6) by asking each host's identity
+ * helper, then forwards `send` and `who` to the daemon. `sync` is only registered
+ * with --with-sync, for hosts that cannot receive automatically.
  */
 
 export function renderItem(i: InboxItem): string {
@@ -24,11 +24,11 @@ async function resolveIdentity(): Promise<{ identity: Identity; label: string }>
   if (claude) {
     return {
       identity: {
-        kind: "binding",
+        kind: "self",
         host: "claude-code",
-        ref: claude.sessionId,
+        key: claude.sessionId,
         name: claude.name,
-        evidence: `ancestor pid ${claude.pid}`,
+        evidence: `shim ancestor pid ${claude.pid}`,
       },
       label: claude.name,
     };
@@ -38,11 +38,11 @@ async function resolveIdentity(): Promise<{ identity: Identity; label: string }>
     const name = codexDisplayNames([codexSession.thread]).get(codexSession.thread.id) ?? "codex-1";
     return {
       identity: {
-        kind: "binding",
+        kind: "self",
         host: "codex",
-        ref: codexSession.thread.id,
+        key: codexSession.thread.id,
         name,
-        evidence: `ancestor pid ${codexSession.pid}`,
+        evidence: `shim ancestor pid ${codexSession.pid}`,
       },
       label: name,
     };
@@ -61,12 +61,15 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   const me = bound.agent.name;
   // If the host passed its messaging socket and token to us, hand them to the daemon
   // so delivery works even if the daemon restarted since the hook ran.
-  if (identity.kind === "binding" && process.env.CLAUDE_CODE_MESSAGING_SOCKET) {
+  if (
+    identity.kind === "self" &&
+    identity.host === "claude-code" &&
+    process.env.CLAUDE_CODE_MESSAGING_SOCKET
+  ) {
     const claude = await findClaudeSession();
     await rpc(
       "attach",
       {
-        sessionId: identity.ref,
         socketPath: process.env.CLAUDE_CODE_MESSAGING_SOCKET,
         token: process.env.CLAUDE_CODE_MESSAGING_TOKEN,
         transcriptPath: claude?.transcriptPath,
@@ -122,17 +125,30 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
     "who",
     {
       description:
-        "List agents on this machine's message bus. Optional substring filter on name or host.",
+        "List agents on this machine's message bus. Optional substring filter on name, host, or directory.",
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
       const r = await rpc<{
-        agents: Array<{ name: string; host: string; state: string; cwd?: string }>;
+        agents: Array<{
+          name: string;
+          host: string;
+          cwd?: string;
+          reachable: boolean;
+          note?: string;
+        }>;
       }>("who", { filter });
       const lines = r.agents
-        .filter((a) => a.name !== me)
+        .filter((a) => a.name !== me && (filter || a.reachable))
         .map((a) =>
-          `${a.name}  ${a.host}  ${a.cwd ?? ""}  ${a.state === "unbound" ? "(not yet on the bus)" : ""}`.trim(),
+          [
+            a.name,
+            a.host,
+            a.cwd ?? "",
+            a.reachable ? "" : `(not reachable: ${a.note ?? "unknown"})`,
+          ]
+            .filter(Boolean)
+            .join("  "),
         );
       return {
         content: [

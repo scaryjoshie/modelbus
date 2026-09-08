@@ -3,41 +3,36 @@ import { GUARDS } from "./guards.ts";
 import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
 /**
- * The bus API: the same handlers serve the CLI, the MCP shim, and any provider.
- * Identity (`agentId`) is always resolved by the caller layer (daemon binding, hook
- * registration, or the test-only CLI `--as`); the API never trusts a name in params.
- * See docs/poc-spec.md section 4.
+ * The bus API: the same handlers serve the CLI, the MCP shim, and any adapter.
+ * Identity (`agentId`) is always resolved by the caller layer; the API never trusts
+ * a name in params. Delivery is delegated through `deliver`, supplied by the daemon
+ * (the tracker), so the API knows nothing about hosts. See docs/poc-spec.md 4.
  */
 
-export interface WakeProvider {
-  host: string;
-  /** Try to deliver `text` into the host session behind `agent`. Return a short result. */
-  wake(agent: Agent, hostSessionRef: string, message: Message, text: string): Promise<string>;
-}
+export type Deliver = (
+  agent: Agent,
+  text: string,
+  marker: string,
+  onReceipt: () => void,
+) => Promise<string>;
 
 export class ApiError extends Error {}
 
 export class Api {
   private readonly events = new EventEmitter();
-  private readonly providers = new Map<string, WakeProvider>();
+  private deliver: Deliver = async () => "none";
 
   constructor(readonly store: Store) {
     this.events.setMaxListeners(1000);
   }
 
-  registerProvider(p: WakeProvider): void {
-    this.providers.set(p.host, p);
-  }
-
-  // ---- identity -----------------------------------------------------------
-
-  bind(opts: { host: string; hostSessionRef: string; preferredName: string; evidence?: string }) {
-    return this.store.bind(opts);
+  setDeliver(fn: Deliver): void {
+    this.deliver = fn;
   }
 
   resolveName(name: string): Agent {
     const a = this.store.agentByName(name);
-    if (!a) throw new ApiError(`no live agent named "${name}"; try who`);
+    if (!a) throw new ApiError(`no agent named "${name}"; try who`);
     return a;
   }
 
@@ -68,35 +63,16 @@ export class Api {
     this.store.touch(from.id);
     this.events.emit("message", { conversationId: conv.id, toIds: [to.id], message });
 
-    const wakeResult = await this.tryWake(to, from, message);
+    const wakeResult = await this.deliver(to, this.render(message, from), `#${message.id}`, () =>
+      this.store.markReceived([message.id], to.id),
+    );
+    this.store.recordWake(message.id, to.id, to.host, wakeResult);
 
     let reply: InboxItem | undefined;
     if (opts.wait && opts.wait > 0) {
       reply = await this.waitForReply(from.id, to, conv.id, message.seq, opts.wait);
     }
     return { message, to, wakeResult, reply };
-  }
-
-  private async tryWake(to: Agent, from: Agent, message: Message): Promise<string> {
-    const provider = this.providers.get(to.host);
-    const binding = this.store.binding(to.id);
-    if (!provider || !binding) {
-      this.store.recordWake(message.id, to.id, "none", "none");
-      return "none";
-    }
-    let result: string;
-    try {
-      result = await provider.wake(
-        to,
-        binding.host_session_ref,
-        message,
-        this.render(message, from),
-      );
-    } catch (e) {
-      result = `error: ${e instanceof Error ? e.message : String(e)}`;
-    }
-    this.store.recordWake(message.id, to.id, provider.host, result);
-    return result;
   }
 
   /** Text handed to a host when a message is queued into it. See spec section 0. */
@@ -193,25 +169,7 @@ export class Api {
     });
   }
 
-  /** Subscribe to new messages for an agent (used by posters). Returns unsubscribe. */
-  onMessageFor(agentId: string, fn: (message: Message) => void): () => void {
-    const handler = (ev: { toIds: string[]; message: Message }) => {
-      if (ev.toIds.includes(agentId)) fn(ev.message);
-    };
-    this.events.on("message", handler);
-    return () => this.events.off("message", handler);
-  }
-
-  // ---- who / log ----------------------------------------------------------
-
-  who(filter?: string): Agent[] {
-    const agents = this.store.listAgents();
-    if (!filter) return agents;
-    const f = filter.toLowerCase();
-    return agents.filter(
-      (a) => a.name.toLowerCase().includes(f) || a.host.toLowerCase().includes(f),
-    );
-  }
+  // ---- log ----------------------------------------------------------------
 
   log(opts: { a?: string; b?: string }) {
     let conversationId: string | undefined;

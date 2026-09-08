@@ -42,16 +42,15 @@ export async function attachCurrentSession(
 
   await ensureDaemon();
   const identity: Identity = {
-    kind: "binding",
+    kind: "self",
     host: "claude-code",
-    ref: session.sessionId,
+    key: session.sessionId,
     name: session.name,
     evidence: `hook/attach pid ${session.pid}`,
   };
   const r = await rpc<{ agent: { name: string } }>(
     "attach",
     {
-      sessionId: session.sessionId,
       socketPath,
       token,
       transcriptPath: hint.transcriptPath ?? session.transcriptPath,

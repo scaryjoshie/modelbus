@@ -32,6 +32,8 @@ interface SessionRow {
   created_at: number;
   archived_at: number | null;
   active_tab_target_id: string | null;
+  parent_id: string | null;
+  trigger: string | null;
 }
 
 async function health(): Promise<z.infer<typeof Health> | undefined> {
@@ -52,7 +54,7 @@ function readSessions(dbPath: string): SessionRow[] {
     try {
       return db
         .query<SessionRow, []>(
-          `SELECT id, title, status, cwd, updated_at, created_at, archived_at, active_tab_target_id
+          `SELECT id, title, status, cwd, updated_at, created_at, archived_at, active_tab_target_id, parent_id, trigger
            FROM sessions
            WHERE archived_at IS NULL AND ephemeral = 0
            ORDER BY updated_at DESC
@@ -92,6 +94,8 @@ export const aside: Provider = {
           startedAt: row.created_at * 1000,
           reach: ["aside-mcp"],
           extra: {
+            parentId: row.parent_id ?? undefined,
+            subagent: Boolean(row.parent_id) || (row.trigger ?? "").includes('"subagent"'),
             account: Number(acct),
             daemonVersion: h.version,
             hasTab: row.active_tab_target_id != null,

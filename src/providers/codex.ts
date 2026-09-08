@@ -50,7 +50,11 @@ export async function threadIdsForPid(pid: number): Promise<string[]> {
 export function threadMeta(id: string): CodexThread {
   const meta: CodexThread = { id, root: false, evidence: "unknown" };
   try {
-    const db = new Database(join(codexHome(), "state_5.sqlite"), { readonly: true });
+    // immutable=1: read without locks or a -shm file, which a read-only connection
+    // cannot create when the WAL sidecars are absent (SQLITE_CANTOPEN otherwise).
+    const db = new Database(`file:${join(codexHome(), "state_5.sqlite")}?immutable=1`, {
+      readonly: true,
+    });
     try {
       const row = db
         .query<

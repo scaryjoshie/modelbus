@@ -2,13 +2,14 @@ import { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Durability, Relationship } from "./adapter.ts";
 
 /**
  * SQLite store. One file, WAL mode. See docs/poc-spec.md section 5.
  *
- * Inbox state lives on `deliveries.received_at`, not on a per-agent cursor: a pull
- * returns messages whose delivery to me is unreceived, then marks them. That lets a
- * scoped pull or a send(wait) consume one DM without skipping others.
+ * Identity: an agent is ours (id, name, host). Its host identity is a sealed handle
+ * in `handles`, found by an opaque key. Presence is what the tracker last observed.
+ * Inbox state lives on `deliveries.received_at`, not on a per-agent cursor.
  */
 
 export interface Agent {
@@ -17,15 +18,39 @@ export interface Agent {
   host: string;
   created_at: number;
   last_seen: number;
-  state: "live" | "offline" | "archived";
+  state: "live" | "gone" | "unknown";
+  /** "host": follows the host's own name for the session; "user": pinned by the user. */
+  name_source: "host" | "user";
 }
 
-export interface Binding {
+export interface Handle {
   agent_id: string;
   host: string;
-  host_session_ref: string;
+  key: string;
+  /** JSON-serialized sealed handle; the core never reads inside. */
+  handle: string;
+  durability: Durability;
+  /** How we came to associate this handle with the agent. */
+  evidence: string;
+  /** "attested" once the session identified itself (hook/shim); "observed" otherwise. */
+  attestation: "observed" | "attested";
   bound_at: number;
-  evidence: string | null;
+}
+
+export interface Presence {
+  agent_id: string;
+  pid: number | null;
+  tty: string | null;
+  cwd: string | null;
+  status: string | null;
+  title: string | null;
+  relationship: Relationship;
+  parent_key: string | null;
+  reachable: number;
+  note: string | null;
+  started_at: number | null;
+  first_seen: number;
+  last_seen: number;
 }
 
 export interface Conversation {
@@ -44,15 +69,6 @@ export interface Message {
   created_at: number;
 }
 
-export interface Delivery {
-  message_id: string;
-  to_agent_id: string;
-  wake_provider: string | null;
-  wake_attempted_at: number | null;
-  wake_result: string | null;
-  received_at: number | null;
-}
-
 export interface InboxItem extends Message {
   from_name: string;
   from_host: string;
@@ -65,17 +81,32 @@ CREATE TABLE IF NOT EXISTS agents (
   host TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_seen INTEGER NOT NULL,
-  state TEXT NOT NULL DEFAULT 'live'
+  state TEXT NOT NULL DEFAULT 'live',
+  name_source TEXT NOT NULL DEFAULT 'host'
 );
-CREATE UNIQUE INDEX IF NOT EXISTS agents_live_name ON agents(name) WHERE state = 'live';
-CREATE TABLE IF NOT EXISTS bindings (
+CREATE UNIQUE INDEX IF NOT EXISTS agents_name ON agents(name);
+CREATE TABLE IF NOT EXISTS handles (
   agent_id TEXT PRIMARY KEY REFERENCES agents(id),
   host TEXT NOT NULL,
-  host_session_ref TEXT NOT NULL,
-  bound_at INTEGER NOT NULL,
-  evidence TEXT
+  key TEXT NOT NULL,
+  handle TEXT NOT NULL,
+  durability TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  attestation TEXT NOT NULL DEFAULT 'observed',
+  bound_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS bindings_ref ON bindings(host, host_session_ref);
+CREATE UNIQUE INDEX IF NOT EXISTS handles_key ON handles(host, key);
+CREATE TABLE IF NOT EXISTS presence (
+  agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+  pid INTEGER, tty TEXT, cwd TEXT, status TEXT, title TEXT,
+  relationship TEXT NOT NULL DEFAULT 'unknown',
+  parent_key TEXT,
+  reachable INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  started_at INTEGER,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
@@ -130,55 +161,81 @@ export class Store {
   // ---- agents -------------------------------------------------------------
 
   agentByName(name: string): Agent | null {
-    return this.db
-      .query<Agent, [string]>("SELECT * FROM agents WHERE name = ? AND state = 'live'")
-      .get(name);
+    return this.db.query<Agent, [string]>("SELECT * FROM agents WHERE name = ?").get(name);
   }
 
   agentById(id: string): Agent | null {
     return this.db.query<Agent, [string]>("SELECT * FROM agents WHERE id = ?").get(id);
   }
 
-  listAgents(): Agent[] {
+  listAgents(states: Agent["state"][] = ["live"]): Agent[] {
+    const marks = states.map(() => "?").join(",");
     return this.db
-      .query<Agent, []>("SELECT * FROM agents WHERE state = 'live' ORDER BY last_seen DESC")
-      .all();
+      .query<Agent, string[]>(
+        `SELECT * FROM agents WHERE state IN (${marks}) ORDER BY last_seen DESC`,
+      )
+      .all(...states);
   }
 
   touch(agentId: string): void {
     this.db.run("UPDATE agents SET last_seen = ? WHERE id = ?", [Date.now(), agentId]);
   }
 
+  setState(agentId: string, state: Agent["state"]): void {
+    this.db.run("UPDATE agents SET state = ? WHERE id = ?", [state, agentId]);
+  }
+
+  // ---- handles (identity) -------------------------------------------------
+
+  handleByKey(host: string, key: string): Handle | null {
+    return this.db
+      .query<Handle, [string, string]>("SELECT * FROM handles WHERE host = ? AND key = ?")
+      .get(host, key);
+  }
+
+  handleOf(agentId: string): Handle | null {
+    return this.db.query<Handle, [string]>("SELECT * FROM handles WHERE agent_id = ?").get(agentId);
+  }
+
   /**
-   * Find or create the agent bound to (host, hostSessionRef). The binding is the
-   * identity; the name is display only and is de-duplicated among live agents.
+   * Find the agent behind (host, key) or create one. The handle is stored sealed.
+   * Attestation only ever moves from observed to attested.
    */
   bind(opts: {
     host: string;
-    hostSessionRef: string;
+    key: string;
+    handle: unknown;
+    durability: Durability;
     preferredName: string;
-    evidence?: string;
+    evidence: string;
+    attestation?: "observed" | "attested";
   }): Agent {
-    const existing = this.db
-      .query<Binding, [string, string]>(
-        "SELECT * FROM bindings WHERE host = ? AND host_session_ref = ?",
-      )
-      .get(opts.host, opts.hostSessionRef);
+    const now = Date.now();
+    const existing = this.handleByKey(opts.host, opts.key);
     if (existing) {
       const agent = this.agentById(existing.agent_id);
       if (agent) {
-        if (agent.state !== "live") {
-          this.db.run("UPDATE agents SET state = 'live', last_seen = ? WHERE id = ?", [
-            Date.now(),
-            agent.id,
-          ]);
-        } else {
-          this.touch(agent.id);
+        this.db.run("UPDATE agents SET last_seen = ?, state = 'live' WHERE id = ?", [
+          now,
+          agent.id,
+        ]);
+        // Follow the host's name until the user pins one (e.g. Codex titles a thread
+        // after its first turn). Our id never changes.
+        if (agent.name_source === "host" && agent.name !== opts.preferredName) {
+          const free = this.freeName(opts.preferredName, agent.id);
+          if (free === opts.preferredName) {
+            this.db.run("UPDATE agents SET name = ? WHERE id = ?", [free, agent.id]);
+          }
+        }
+        if (opts.attestation === "attested" && existing.attestation !== "attested") {
+          this.db.run(
+            "UPDATE handles SET attestation = 'attested', evidence = ?, handle = ? WHERE agent_id = ?",
+            [opts.evidence, JSON.stringify(opts.handle), agent.id],
+          );
         }
         return this.agentById(agent.id) as Agent;
       }
     }
-    const now = Date.now();
     const id = newId();
     const name = this.freeName(opts.preferredName);
     this.db.run(
@@ -186,32 +243,83 @@ export class Store {
       [id, name, opts.host, now, now],
     );
     this.db.run(
-      "INSERT INTO bindings (agent_id, host, host_session_ref, bound_at, evidence) VALUES (?, ?, ?, ?, ?)",
-      [id, opts.host, opts.hostSessionRef, now, opts.evidence ?? null],
+      "INSERT INTO handles (agent_id, host, key, handle, durability, evidence, attestation, bound_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        opts.host,
+        opts.key,
+        JSON.stringify(opts.handle),
+        opts.durability,
+        opts.evidence,
+        opts.attestation ?? "observed",
+        now,
+      ],
     );
     return this.agentById(id) as Agent;
   }
 
-  binding(agentId: string): Binding | null {
-    return this.db
-      .query<Binding, [string]>("SELECT * FROM bindings WHERE agent_id = ?")
-      .get(agentId);
-  }
-
-  private freeName(preferred: string): string {
-    if (!this.agentByName(preferred)) return preferred;
+  private freeName(preferred: string, forAgentId?: string): string {
+    const taken = (n: string) => {
+      const a = this.agentByName(n);
+      return a !== null && a.id !== forAgentId;
+    };
+    if (!taken(preferred)) return preferred;
     const m = preferred.match(/^(.*)-(\d+)$/);
     const base = m ? (m[1] as string) : preferred;
     for (let n = m ? Number(m[2]) + 1 : 2; n < 1000; n++) {
       const candidate = `${base}-${n}`;
-      if (!this.agentByName(candidate)) return candidate;
+      if (!taken(candidate)) return candidate;
     }
     return `${preferred}-${newId()}`;
   }
 
+  /** Pin a user-chosen name; the host's name no longer overrides it. */
+  rename(agentId: string, name: string): string {
+    const free = this.freeName(name, agentId);
+    this.db.run("UPDATE agents SET name = ?, name_source = 'user' WHERE id = ?", [free, agentId]);
+    return free;
+  }
+
+  // ---- presence -----------------------------------------------------------
+
+  presenceOf(agentId: string): Presence | null {
+    return this.db
+      .query<Presence, [string]>("SELECT * FROM presence WHERE agent_id = ?")
+      .get(agentId);
+  }
+
+  upsertPresence(
+    agentId: string,
+    p: Omit<Presence, "agent_id" | "first_seen" | "last_seen">,
+  ): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO presence (agent_id, pid, tty, cwd, status, title, relationship, parent_key, reachable, note, started_at, first_seen, last_seen)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET pid=excluded.pid, tty=excluded.tty, cwd=excluded.cwd, status=excluded.status,
+         title=excluded.title, relationship=excluded.relationship, parent_key=excluded.parent_key, reachable=excluded.reachable,
+         note=excluded.note, started_at=excluded.started_at, last_seen=excluded.last_seen`,
+      [
+        agentId,
+        p.pid,
+        p.tty,
+        p.cwd,
+        p.status,
+        p.title,
+        p.relationship,
+        p.parent_key,
+        p.reachable,
+        p.note,
+        p.started_at,
+        now,
+        now,
+      ],
+    );
+    this.db.run("UPDATE agents SET last_seen = ?, state = 'live' WHERE id = ?", [now, agentId]);
+  }
+
   // ---- conversations ------------------------------------------------------
 
-  /** The single DM between two agents, created on first use. */
   dm(a: string, b: string): Conversation {
     const key = `dm:${[a, b].sort().join("+")}`;
     const found = this.db
@@ -247,7 +355,6 @@ export class Store {
 
   // ---- messages & deliveries ---------------------------------------------
 
-  /** Insert a message and one unreceived delivery per other participant. */
   insertMessage(conversationId: string, fromAgentId: string, body: string): Message {
     const id = newId();
     const now = Date.now();
@@ -269,7 +376,6 @@ export class Store {
     return this.db.query<Message, [string]>("SELECT * FROM messages WHERE id = ?").get(id);
   }
 
-  /** Unreceived messages for an agent, oldest first, optionally in one conversation. */
   inbox(agentId: string, opts: { conversationId?: string; limit: number }): InboxItem[] {
     const sql = `
       SELECT m.*, a.name AS from_name, a.host AS from_host
@@ -311,7 +417,6 @@ export class Store {
     );
   }
 
-  /** Messages in a conversation with seq greater than `afterSeq`, from a given sender. */
   repliesAfter(conversationId: string, fromAgentId: string, afterSeq: number): Message[] {
     return this.db
       .query<Message, [string, string, number]>(

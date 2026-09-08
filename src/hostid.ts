@@ -41,6 +41,7 @@ const ClaudeRegistry = z.object({
   cwd: z.string(),
   name: z.string().optional(),
   messagingSocketPath: z.string().optional(),
+  status: z.string().optional(),
 });
 
 export interface ClaudeSession {
@@ -49,6 +50,7 @@ export interface ClaudeSession {
   cwd: string;
   name: string;
   socketPath?: string;
+  status?: string;
   /** Derived from Claude Code's on-disk layout; may not exist yet for a brand-new session. */
   transcriptPath: string;
 }
@@ -68,6 +70,7 @@ export function readClaudeRegistry(pid: number): ClaudeSession | null {
       cwd: r.cwd,
       name: r.name ?? `claude-${r.pid}`,
       socketPath: r.messagingSocketPath,
+      status: r.status,
       transcriptPath: claudeTranscriptPath(r.cwd, r.sessionId),
     };
   } catch {

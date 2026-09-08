@@ -125,28 +125,32 @@ async function main() {
       return;
     }
     case "who": {
+      const filter = rest.find((x) => !x.startsWith("--"));
       const r = await rpc<{
         agents: Array<{
           name: string;
           host: string;
-          state: string;
-          cwd?: string;
+          attestation?: string;
           status?: string;
-          lastSeen?: number;
+          cwd?: string;
+          reachable: boolean;
+          note?: string;
+          lastSeen: number;
         }>;
-      }>("who", { filter: rest[0] });
+      }>("who", { filter, fresh: rest.includes("--fresh") });
       if (!r.agents.length) return console.log("nobody");
       console.log(
         table(
           r.agents.map((a) => [
             a.name,
             a.host,
-            a.state,
+            a.reachable ? "reachable" : `no (${a.note ?? "?"})`,
+            a.attestation ?? "",
             a.status ?? "",
             shortCwd(a.cwd),
             age(a.lastSeen),
           ]),
-          ["name", "host", "state", "status", "cwd", "last-seen"],
+          ["name", "host", "delivery", "identity", "status", "cwd", "last-seen"],
         ),
       );
       return;
@@ -192,7 +196,7 @@ async function main() {
     case "post": {
       // Internal helper: {socketPath, token?, text} on stdin; write to the inbox
       // socket and exit immediately (see claude-code-wake.ts).
-      const { post } = await import("./providers/claude-code-wake.ts");
+      const { post } = await import("./adapters/claude-code.ts");
       const p = JSON.parse(await Bun.stdin.text()) as {
         socketPath: string;
         token?: string;
@@ -207,23 +211,16 @@ async function main() {
       return;
     }
     case "init": {
-      const { claudeInitPlan, claudeInitWrite } = await import("./providers/claude-code-setup.ts");
-      const { codexInitPlan, codexInitWrite } = await import("./providers/codex-setup.ts");
-      const plan = claudeInitPlan();
-      const cplan = codexInitPlan();
-      console.log(`Claude Code (${plan.settingsPath}):`);
-      console.log(`  merge: ${JSON.stringify(plan.settingsPatch)}`);
-      console.log(`  run:   ${plan.mcpCommand.join(" ")}`);
-      console.log(`Codex (${cplan.configPath}):`);
-      console.log(
-        cplan.present ? "  already configured" : `  run:   ${cplan.mcpCommand.join(" ")}`,
-      );
+      const { allAdapters } = await import("./adapters/index.ts");
+      const plans = allAdapters()
+        .map((a) => a.configure?.())
+        .filter((p): p is NonNullable<typeof p> => Boolean(p));
+      for (const p of plans) for (const line of p.describe) console.log(line);
       if (!rest.includes("--write")) {
         console.log("\ndry run; pass --write to apply");
         return;
       }
-      for (const line of await claudeInitWrite(plan)) console.log(`  ${line}`);
-      for (const line of await codexInitWrite(cplan)) console.log(`  ${line}`);
+      for (const p of plans) for (const line of await p.apply()) console.log(`  ${line}`);
       return;
     }
     default:
@@ -234,7 +231,7 @@ async function main() {
           "  scan [--json]                        live sessions on this machine",
           "  send --as A --to B [--wait N] <text> send a DM (test identity)",
           "  sync --as A [--scope B] [--wait N]   read my inbox (test identity)",
-          "  who [filter]                         registered agents",
+          "  who [filter] [--fresh]               agents on the bus (live sessions)",
           "  log [--conversation A,B]             messages with delivery state",
           "  attach                               register the Claude Code session this runs inside",
           "  hook claude-session-start            SessionStart hook entry (stdin JSON)",

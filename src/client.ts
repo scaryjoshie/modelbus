@@ -4,7 +4,7 @@ import { socketPath } from "./daemon.ts";
 
 export type Identity =
   | { kind: "cli"; as: string }
-  | { kind: "binding"; host: string; ref: string; name: string; evidence?: string };
+  | { kind: "self"; host: string; key: string; name: string; evidence?: string };
 
 export class DaemonUnreachable extends Error {}
 

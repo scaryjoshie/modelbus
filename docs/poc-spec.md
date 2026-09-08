@@ -85,6 +85,41 @@
 - **Shim identity** also resolves Codex sessions by ancestor pid. Not yet tested
   from inside Codex (needs the MCP entry in `~/.codex/config.toml`; `init` prints it).
 
+### Architecture revision (2026-09-08, after Joshua's review): adapters, tracker, sealed handles
+
+The "session id" field was a leaky abstraction: a core field whose meaning depended
+on the host. Replaced by:
+
+- **Agent** is the only uniform object: our id (permanent, opaque, the only identifier
+  that ever appears in messages, logs, or `who`), our name (display, follows the
+  host's name until the user pins one), host kind, state (live / gone / unknown).
+- **Handle** is the host's identity for the session, produced and interpreted only by
+  that host's adapter. The core stores it sealed (JSON blob) and compares adapters'
+  opaque `key` strings for equality and indexing; it never reads inside. Adapters
+  also report `durability` (process / session / permanent) so the tracker knows how
+  much to trust a reappearing key without knowing why.
+- **HostAdapter** interface (`src/core/adapter.ts`): `observe()` returns observations
+  (handle, key, name, durability, relationship top-level|subagent|unknown, evidence,
+  reachable, facts); `handleFromKey()`; `deliver(handle, text, marker, onReceipt)`;
+  `attach(handle, info)` for runtime secrets; `configure()` for `init`.
+- **Tracker** (`src/tracker.ts`) is host-agnostic: a reconcile loop (every 3 s, and on
+  demand) asks every adapter what is live, matches by (host, key), creates agents for
+  new observations, marks the unseen gone, records presence. Only `top-level`
+  observations become peers; subagents and uncertain classifications never do. A
+  failing adapter never marks its agents gone. `identify()` handles a session naming
+  itself (hook/shim) and upgrades attestation from observed to attested.
+- **Persistence:** identity and conversations are keyed by the sealed handle and
+  survive daemon restarts and host process restarts that keep the same host identity
+  (`--resume`, `codex resume`). Runtime secrets (Claude Code token) live in the
+  adapter's memory only and are re-supplied by the hook, `attach`, or the shim.
+- Adapters live in `src/adapters/`; the older `src/providers/` detection helpers are
+  reused by them and by `scan`.
+
+Findings while doing it: Codex's state DB must be opened with SQLite's `immutable=1`
+URI flag (a read-only connection cannot create the WAL `-shm` sidecar when absent);
+Aside's `parent_id` / `trigger.type` classify its sessions; Codex names threads after
+the first turn, hence the follow-the-host naming policy.
+
 ## 1. Goal
 
 Prove the premise: two of Joshua's existing agent sessions exchange messages through
