@@ -7,6 +7,11 @@
 > out to be wrong. Items marked **OPEN** are explicitly undecided. Items marked
 > **LEANING** are the current preference but are not settled.
 >
+> **Latest discussion: section 18 (2026-09-07).** It records Joshua's clarifications
+> on automatic delivery, crash behavior, deferred do-not-disturb/subagent UI ideas,
+> and omitting the wake budget from v0. It supersedes earlier suggestions on those
+> points; other exploratory material is retained for context.
+>
 > **If you are an agent implementing modelbus:** do not treat this document as a spec.
 > Before making any design choice that touches something described here, ask Joshua.
 > Do not resolve an OPEN item on your own. Do not "just pick something reasonable."
@@ -306,15 +311,13 @@ A message is queued for the recipient's next turn. A sender may ask for an upgra
 upgrade happens only if the recipient's provider supports it. Most traffic is plain
 queueing.
 
-**Adapters are wake signals, not message carriers (from the Codex review, section 14).**
-The message is stored once in the bus. What an adapter delivers is "you have mail"
-(optionally carrying the body as a convenience, keyed by message id so a duplicate is
-harmless). This makes falling through the cascade safe: two wake signals for one
-message cannot make the agent act twice, because receipt is the agent's cursor
-advancing past the message, not the adapter reporting success. Track four states
-separately: stored, wake attempted (which adapter), receipt confirmed (cursor), reply
-received. Never claim more than the state supports. Claude Code Channels explicitly
-does not acknowledge processing, which is why this matters.
+**Earlier notification-only proposal (revised 2026-09-07):** the Codex review
+suggested storing in the bus and sending "you have mail" so every recipient calls
+`sync`. Joshua instead expects ordinary DMs to arrive automatically as message
+bodies where supported. The bus still stores the message, but a cursor or ID alone
+does not make duplicate native delivery harmless. Track storage, native queueing,
+conversation/turn evidence, and replies separately. Receipt and retry semantics
+remain OPEN; see section 18 and `native-delivery-observations.md`.
 
 **Priority decides how far down the chain to go.** Normal priority stops at tier 5.
 Wake priority tries 1 through 3. A normal-priority message may get a delayed push
@@ -330,6 +333,11 @@ routines, then the pty launcher. cmux/tmux injection only as a fallback.
 ---
 
 ## 6. Loop protection defaults (LEANING, numbers borrowed from shipping projects)
+
+The list below is exploratory. **2026-09-07: Joshua agreed to omit the assistant's
+proposed wake budget from v0.** No 20-wakes/hour cap or replacement automatic
+conversation budget is required for the initial experiments. See `poc-spec.md` for
+its narrower guard proposal.
 
 - Per-message sender/source field; drop self-echo.
 - Identical-repeat dedupe within a short window.
@@ -638,8 +646,9 @@ Joshua ran a parallel Codex session (GPT-6, thread `01a0789c…`) over the same 
 Its critique was good; the points worth carrying:
 
 - **Delivery certainty.** Cascading adapters on "failed to report success" risks
-  double delivery. Fix adopted in section 5: store once, adapters are wake signals,
-  track stored / wake attempted / receipt / reply as separate states.
+  double delivery. The original notification-only fix was revised on 2026-09-07:
+  ordinary messages should arrive automatically, with provider-specific receipt
+  evidence and recovery behavior still to investigate (sections 5 and 18).
 - **Session identity binding.** How does the daemon know *which conversation* called
   `sync()`? Two sessions in the same repo with the same MCP config, or a host sharing
   one MCP connection across conversations, could merge inboxes. A friendly name and a
@@ -647,7 +656,7 @@ Its critique was good; the points worth carrying:
   host, connected to the daemon over a unix socket, identified by walking the shim's
   parent process chain to the host pid and its registry entry. **Acceptance test:
   two sessions in one repository stay distinct.**
-- **Loop guards do not stop unique-message ping-pong.** A asks, B answers and asks,
+- **Historical suggestion, deferred from v0 on 2026-09-07:** loop guards do not stop unique-message ping-pong. A asks, B answers and asks,
   forever, every message unique and under the rate limit. Add a **bounded number of
   automatic wakes per thread**, after which messages still store but do not wake, and
   the UI shows the pause. Also: `send(wait)` keeps the sender's turn active while the
@@ -758,3 +767,90 @@ federation, pty launcher, cmux/tmux injection, steer upgrades.
   ids, `who`, one wake adapter (tmux paste), loop guards, and the Aside experiment,
   with the acceptance test being Aside <-> Claude Code in both directions with nothing
   on screen. Presence detector and web UI may follow immediately after. Possibly less.
+
+## 18. Joshua's clarifications, 2026-09-07
+
+This section supersedes conflicting earlier suggestions for the POC. Future ideas
+remain options to explore, not implementation requirements.
+
+### Automatic delivery and the role of sync (OPEN)
+
+Joshua expects ordinary DMs, and future group @mentions, to be queued into the
+recipient automatically wherever the provider supports it. An agent should not
+need a routine `sync` call merely to fetch an already delivered message or announce
+that it read it. Investigate native queue/turn tracking first.
+
+`sync` might remain for a pull-only provider, catch-up after failed delivery, or
+future unmentioned group traffic. Its necessity and exact return values are OPEN.
+If retained, it should return a bounded batch of pending messages, not one message
+at a time. The earlier separate `register()` suggestion is also still a proposal:
+registration/setup information and recurring inbox reads have different purposes.
+
+### Do not disturb (potential future idea, not v0)
+
+Joshua suggested an on/off do-not-disturb control. A useful candidate behavior is
+to continue storing incoming messages while pausing automatic queue submissions or
+wakes for the recipient, then allow catch-up after it is turned off. This would let
+the user pause incoming work without disconnecting the session or losing its inbox.
+
+**OPEN:** per-session versus global control; whether an agent can request it; whether
+any sender can override it; timed expiry; and how pending messages are released on
+disable (batch, manual catch-up, or normal delivery). Already submitted native queue
+items may require host support to pause or retract. This is not a stop/cancel command
+for the agent's current task, and none of these details is settled.
+
+### Crash recovery: provider-specific and deferred beyond v0
+
+Joshua clarified that v0 does not need crash detection. Automatic crash recovery and
+resending are deferred too. A future decision to resend must depend on the provider:
+a host that persists and replays its pending queue needs different handling from a
+host that loses pending messages. Do not introduce one unconditional bus-wide
+resend-on-crash rule. The bus can retain common message records while providers
+supply the persistence/consumption evidence and recovery behavior; the exact API is OPEN.
+
+When revisiting recovery, separate a modelbus restart, a recipient crash, and a
+host-daemon crash. Ordinary bus-store persistence remains useful in v0 without
+building crash monitoring or promising exactly-once agent actions.
+
+Read-only observations and a disposable-session test matrix are recorded in
+[`native-delivery-observations.md`](native-delivery-observations.md). Actual crash
+tests are deferred, not a v0 acceptance gate. Unknown delivery does not by itself
+justify repeatedly replaying a message; the final reconciliation policy is OPEN.
+
+### Subagents: classify now, organize and display later
+
+Joshua wants to defer subagent complexity. Two possible future UI directions are:
+
+- Treat providers as folder-like containers where their agents/subagents can live.
+- Detect subagents and display them explicitly on screen, potentially beneath their
+  parent session or in a separate view.
+
+Neither option is selected, and provider grouping need not determine messaging
+addresses or permissions. Clarify how a provider container relates to an individual
+parent session when designing that UI.
+
+For v0, distinguish top-level sessions from subagents so helpers are not accidentally
+registered as independent peers. Retain host parent/origin evidence where available;
+represent an unknown relationship explicitly. No subagent addressing, management,
+or hierarchy UI is required.
+
+Local Codex metadata confirmed a main CLI conversation and three subagents sharing
+its parent ID in one process. Claude also supports subagents sharing a parent's MCP
+connection and in-process teammates. Process ancestry is useful evidence, but it
+does not universally identify one model conversation. See the official
+[Codex subagent documentation](https://learn.chatgpt.com/docs/agent-configuration/subagents),
+[Claude MCP scoping](https://code.claude.com/docs/en/sub-agents#scope-mcp-servers-to-a-subagent),
+and [Claude teammate modes](https://code.claude.com/docs/en/agent-teams#choose-a-display-mode).
+
+Follow-up inspection found explicit Aside `trigger.type = "subagent"` records as
+well as `parent_id`, and Claude child transcripts carrying `agentId`, `sessionId`,
+and `isSidechain`. Our current scanner does not use these relationships. See
+[`subagent-detection.md`](subagent-detection.md) for the current implementation gaps,
+limits of the evidence, and a proposed detection/identity experiment before messaging.
+
+### No automatic wake budget in v0
+
+The concept came from the earlier Codex review, and the POC proposal supplied the
+20/hour number; Joshua had not requested it. Joshua agreed to omit it. Observe the
+initial exchanges before choosing any future policy for limiting unattended loops.
+This deferral does not require removing unrelated body-size or transport safeguards.
