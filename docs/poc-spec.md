@@ -120,6 +120,24 @@ URI flag (a read-only connection cannot create the WAL `-shm` sidecar when absen
 Aside's `parent_id` / `trigger.type` classify its sessions; Codex names threads after
 the first turn, hence the follow-the-host naming policy.
 
+### Milestone 4 implemented (2026-09-08): Aside, and the round trips
+
+- **Aside delivery = its CLI**, `aside --account u<N> session queue <id> "<text>"`,
+  the exact analogue of `codex queue` (`steer` is the louder upgrade). Verified: the
+  text appears as a `user` entry in the session's `messages.jsonl` and a turn runs.
+  The heartbeat/`sync` idea is withdrawn: models never poll; the bus delivers.
+- Aside identity is per session (session id + account, sealed). Outbound messages
+  from Aside are attributed per *account* because Aside spawns one shim per account;
+  `init` writes the shim into each account's settings with MODELBUS_* env.
+- **Round trips.** Claude Code: a fresh session registered itself via the hook,
+  received a message with no dialog, replied through its `send` tool; both directions
+  received, zero manual steps. Codex: a fresh session's shim bound it at startup;
+  Codex prompts once per MCP tool on first use with an "Always allow" option (the
+  spec's open question). Aside: inbound verified; outbound waits for Aside to load
+  the new MCP server (it does not hot-reload settings written from outside).
+- `init` covers all three hosts. Claude Code and Codex prompts: none after init
+  except Codex's one-time per-tool "Always allow".
+
 ## 1. Goal
 
 Prove the premise: two of Joshua's existing agent sessions exchange messages through
