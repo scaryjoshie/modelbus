@@ -44,6 +44,25 @@
 - Build plan: (1) core, repo only; (2) Claude Code provider; (3) Codex provider,
   candidate for the parallel Codex session; (4) Aside; (5) acceptance.
 
+### Milestone 2 implemented (2026-09-07, Claude session)
+
+- **No poster process.** Verified: a process reparented to launchd, holding the
+  session token, is delivered without a dialog in bypass mode. So the hook (or
+  `modelbus attach` run inside a live session) hands the daemon the socket path,
+  token, and transcript path over the unix socket, and the daemon posts directly.
+  Tokens are held in the provider's memory only.
+- **Registration** = `attach` RPC with a binding identity {host: claude-code, ref:
+  session id, name from the registry}. Live sessions started before `init` can run
+  `modelbus attach` from their own Bash tool; new sessions get it from the hook.
+- **Receipt** = transcript entry containing the marker `#<message id>`: either
+  `queue-operation` + `remove` (queued mid-turn) or a `user` entry (attached to a
+  turn). Both observed. The daemon polls the transcript for up to 15 minutes.
+- **MCP shim** binds identity by ancestor-pid walk to `~/.claude/sessions/<pid>.json`
+  and exposes `send` and `who`; `sync` only with `--with-sync`. Verified over stdio
+  from inside this session.
+- **`init`** is dry-run by default; `--write` merges the allow rule and SessionStart
+  hook into `~/.claude/settings.json` and runs `claude mcp add -s user`. Not run.
+
 ## 1. Goal
 
 Prove the premise: two of Joshua's existing agent sessions exchange messages through

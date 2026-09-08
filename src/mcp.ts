@@ -44,6 +44,21 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   const { identity, label } = await resolveIdentity();
   const bound = await rpc<{ agent: Agent }>("bind", {}, identity);
   const me = bound.agent.name;
+  // If the host passed its messaging socket and token to us, hand them to the daemon
+  // so delivery works even if the daemon restarted since the hook ran.
+  if (identity.kind === "binding" && process.env.CLAUDE_CODE_MESSAGING_SOCKET) {
+    const claude = await findClaudeSession();
+    await rpc(
+      "attach",
+      {
+        sessionId: identity.ref,
+        socketPath: process.env.CLAUDE_CODE_MESSAGING_SOCKET,
+        token: process.env.CLAUDE_CODE_MESSAGING_TOKEN,
+        transcriptPath: claude?.transcriptPath,
+      },
+      identity,
+    ).catch(() => undefined);
+  }
 
   const server = new McpServer(
     { name: "modelbus", version: "0.0.0" },

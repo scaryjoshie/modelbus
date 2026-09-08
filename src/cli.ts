@@ -173,6 +173,18 @@ async function main() {
       console.log(`attached as "${await attachCurrentSession()}"`);
       return;
     }
+    case "post": {
+      // Internal helper: {socketPath, token?, text} on stdin; write to the inbox
+      // socket and exit immediately (see claude-code-wake.ts).
+      const { post } = await import("./providers/claude-code-wake.ts");
+      const p = JSON.parse(await Bun.stdin.text()) as {
+        socketPath: string;
+        token?: string;
+        text: string;
+      };
+      await post(p.socketPath, p.token, p.text);
+      return;
+    }
     case "mcp": {
       const { runMcpShim } = await import("./mcp.ts");
       await runMcpShim({ withSync: rest.includes("--with-sync") });

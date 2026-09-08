@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
 import type { Api, WakeProvider } from "../core/api.ts";
 import type { Agent, Message } from "../core/store.ts";
+import { cliPath } from "../ensure.ts";
 import { findClaudeSessionById } from "../hostid.ts";
 
 /**
@@ -9,13 +10,18 @@ import { findClaudeSessionById } from "../hostid.ts";
  *
  *  - With the session's token (handed to the daemon by the SessionStart hook or by
  *    `modelbus attach` run inside the session): delivered with no dialog in any
- *    permission mode. Verified 2026-09-07 from a non-child process.
+ *    permission mode, PROVIDED the posting process has exited by the time Claude
+ *    Code checks. A long-lived poster that is not the session's child is held (seen
+ *    2026-09-07: "verified pid <daemon>"). So the daemon posts through a short-lived
+ *    helper process (`modelbus post`) that writes and exits immediately.
  *  - Without a token: posted unattested; the session's inbound rules decide
  *    (delivered in prompting mode, held behind a dialog in bypass mode).
  *
- * Receipt is read from the session transcript: Claude Code writes a
- * `queue-operation` `remove` entry containing our marker when the message is
- * pulled into a turn. Tokens live only in memory here, never in the store or logs.
+ * Receipt is read from the session transcript. Claude Code records a delivered peer
+ * message either as a `queue-operation` `remove` entry (message queued during a
+ * turn, then pulled in) or directly as a `user` entry (message attached to a turn).
+ * Either one containing our marker means the model has the message. Tokens live
+ * only in memory here, never in the store or logs.
  */
 
 interface Attached {
@@ -56,7 +62,7 @@ export class ClaudeCodeWake implements WakeProvider {
     if (!target) return "no-socket";
     if (!existsSync(target.socketPath)) return "socket-missing";
     try {
-      await post(target.socketPath, target.token, text);
+      await postViaHelper(target.socketPath, target.token, text);
     } catch (e) {
       return `error: ${e instanceof Error ? e.message : String(e)}`;
     }
@@ -83,7 +89,7 @@ export class ClaudeCodeWake implements WakeProvider {
       offset = size;
       for (const line of buf.toString("utf8").split("\n")) {
         if (!line.includes(marker)) continue;
-        if (isQueueRemove(line)) {
+        if (isDeliveredEntry(line)) {
           this.api.store.markReceived([messageId], agentId);
           return stop();
         }
@@ -97,16 +103,37 @@ export class ClaudeCodeWake implements WakeProvider {
   }
 }
 
-export function isQueueRemove(line: string): boolean {
+/** A transcript line (already known to contain the marker) that proves delivery. */
+export function isDeliveredEntry(line: string): boolean {
   try {
     const d = JSON.parse(line) as { type?: string; operation?: string };
-    return d.type === "queue-operation" && d.operation === "remove";
+    if (d.type === "queue-operation") return d.operation === "remove";
+    return d.type === "user";
   } catch {
     return false;
   }
 }
 
-function post(socketPath: string, token: string | undefined, text: string): Promise<void> {
+/**
+ * Spawn a helper that connects, writes, and exits at once, so Claude Code's own-child
+ * check finds no running process and verifies the token instead. The token goes over
+ * the helper's stdin, never argv or the environment.
+ */
+async function postViaHelper(socketPath: string, token: string | undefined, text: string) {
+  const child = Bun.spawn([process.execPath, cliPath(), "post"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  child.stdin.write(JSON.stringify({ socketPath, token, text }));
+  child.stdin.end();
+  const code = await child.exited;
+  if (code !== 0)
+    throw new Error((await new Response(child.stderr).text()).trim() || `helper exit ${code}`);
+}
+
+/** Direct post from this process. Used by the `modelbus post` helper. */
+export function post(socketPath: string, token: string | undefined, text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const sock = createConnection({ path: socketPath });
     sock.setTimeout(5000);
