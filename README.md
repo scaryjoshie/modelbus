@@ -34,6 +34,7 @@ daemon), then maps each terminal session to its cmux workspace and surface. The
 routine wake), `cmux-send` (text injection into its terminal surface), or `pull-only`.
 
 Docs:
+- `docs/protocol.md` — how any process joins the bus (register, send, receive).
 - `docs/poc-spec.md` — the DM-only, no-UI POC: three tools, data model, delivery,
   identity binding, providers, build order. A proposal, not a decision.
 - `docs/design-notes.md` — the wider exploration; explicitly drafts, not decisions.

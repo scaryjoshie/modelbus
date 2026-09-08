@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { allAdapters } from "./adapters/index.ts";
+import { RegisteredAdapter } from "./adapters/registered.ts";
 import type { HostAdapter } from "./core/adapter.ts";
 import { Api, ApiError } from "./core/api.ts";
 import { Store } from "./core/store.ts";
@@ -16,6 +17,7 @@ import { Tracker } from "./tracker.ts";
  *   - { kind: "cli", as }                         test-only (spec section 6)
  *   - { kind: "self", host, key, name, evidence } a session identifying itself via its
  *     hook or shim; `key` is the adapter's opaque key. The core never reads it.
+ *   - { kind: "token", token }                     a self-registered process
  */
 
 export function modelbusHome(): string {
@@ -37,10 +39,11 @@ const Identity = z.discriminatedUnion("kind", [
     name: z.string().min(1),
     evidence: z.string().optional(),
   }),
+  z.object({ kind: z.literal("token"), token: z.string().min(8) }),
 ]);
 
 const Request = z.object({
-  method: z.enum(["send", "pull", "who", "log", "bind", "attach", "ping"]),
+  method: z.enum(["send", "pull", "who", "log", "bind", "attach", "register", "ping"]),
   params: z.record(z.string(), z.unknown()).default({}),
   identity: Identity.optional(),
 });
@@ -50,7 +53,8 @@ export function createDaemon(
 ) {
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store);
-  const tracker = new Tracker(store, opts.adapters ?? allAdapters());
+  const registered = new RegisteredAdapter(store);
+  const tracker = new Tracker(store, opts.adapters ?? allAdapters(store));
   api.setDeliver((agent, text, marker, onReceipt) =>
     tracker.deliver(agent, text, marker, onReceipt),
   );
@@ -72,6 +76,12 @@ export function createDaemon(
         evidence: "cli --as (test identity)",
         attestation: "attested",
       }).id;
+    }
+    if (identity.kind === "token") {
+      const h = store.handleByKey("registered", identity.token);
+      if (!h) throw new ApiError("unknown token; register first");
+      store.touch(h.agent_id);
+      return h.agent_id;
     }
     return tracker.identify({
       host: identity.host,
@@ -107,6 +117,24 @@ export function createDaemon(
           case "bind": {
             const id = resolveIdentity(identity);
             return Response.json({ agent: store.agentById(id) });
+          }
+          case "register": {
+            // Any process joins by name; gets a token that is its identity from now on.
+            const p = z
+              .object({
+                name: z.string().min(1),
+                host: z.string().optional(),
+                pid: z.number().int().optional(),
+                deliver: z.string().optional(),
+              })
+              .parse(params);
+            const r = registered.register({
+              name: p.name,
+              hostLabel: p.host,
+              pid: p.pid,
+              deliver: p.deliver,
+            });
+            return Response.json({ agent: r.agent, token: r.token });
           }
           case "attach": {
             // A session hands over runtime info its adapter needs (e.g. socket + token).

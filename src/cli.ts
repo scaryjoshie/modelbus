@@ -59,7 +59,9 @@ export function renderItem(i: InboxItem): string {
  * Identity for CLI send/sync: the host session this shell runs inside (a Claude Code
  * or Codex session's Bash tool), or the test-only --as override.
  */
-async function resolveCliIdentity(values: { as?: string }): Promise<Identity> {
+async function resolveCliIdentity(values: { as?: string; token?: string }): Promise<Identity> {
+  const token = values.token ?? process.env.MODELBUS_TOKEN;
+  if (token) return { kind: "token", token };
   if (values.as) {
     console.error(`(test identity: acting as "${values.as}")`);
     return { kind: "cli", as: values.as };
@@ -118,7 +120,12 @@ async function main() {
     case "send": {
       const { values, positionals } = parseArgs({
         args: rest,
-        options: { as: { type: "string" }, to: { type: "string" }, wait: { type: "string" } },
+        options: {
+          as: { type: "string" },
+          token: { type: "string" },
+          to: { type: "string" },
+          wait: { type: "string" },
+        },
         allowPositionals: true,
       });
       const body = positionals.join(" ");
@@ -138,7 +145,12 @@ async function main() {
     case "sync": {
       const { values } = parseArgs({
         args: rest,
-        options: { as: { type: "string" }, scope: { type: "string" }, wait: { type: "string" } },
+        options: {
+          as: { type: "string" },
+          token: { type: "string" },
+          scope: { type: "string" },
+          wait: { type: "string" },
+        },
       });
       const r = await rpc<{ items: InboxItem[]; more: number; moreElsewhere: number }>(
         "pull",
@@ -202,6 +214,34 @@ async function main() {
       );
       return;
     }
+    case "register": {
+      // Any process joins the bus by name. Prints the token that is its identity.
+      const { values } = parseArgs({
+        args: rest,
+        options: {
+          name: { type: "string" },
+          host: { type: "string" },
+          pid: { type: "string" },
+          deliver: { type: "string" },
+        },
+      });
+      if (!values.name) {
+        console.error(
+          "usage: modelbus register --name <name> [--host <label>] [--pid <n>] [--deliver <cmd>]",
+        );
+        process.exit(2);
+      }
+      await (await import("./ensure.ts")).ensureDaemon();
+      const r = await rpc<{ agent: Agent; token: string }>("register", {
+        name: values.name,
+        host: values.host,
+        pid: values.pid ? Number(values.pid) : undefined,
+        deliver: values.deliver,
+      });
+      console.error(`registered as "${r.agent.name}"; use --token or MODELBUS_TOKEN for send/sync`);
+      console.log(r.token);
+      return;
+    }
     case "hook": {
       // Claude Code SessionStart hook: stdin carries the hook JSON. Stdout is added
       // to the session's context, so print one useful line.
@@ -260,6 +300,7 @@ async function main() {
           "  sync [--as A] [--scope B] [--wait N]  read my inbox",
           "  who [filter] [--fresh]               agents on the bus (live sessions)",
           "  log [--conversation A,B]             messages with delivery state",
+          "  register --name N [--deliver CMD]    join as any process; prints a token",
           "  attach                               register the Claude Code session this runs inside",
           "  hook claude-session-start            SessionStart hook entry (stdin JSON)",
           "  mcp [--with-sync]                    stdio MCP shim (spawned by hosts)",

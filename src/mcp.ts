@@ -62,6 +62,9 @@ async function resolveIdentity(): Promise<{ identity: Identity; label: string }>
       label: MODELBUS_NAME,
     };
   }
+  if (process.env.MODELBUS_TOKEN) {
+    return { identity: { kind: "token", token: process.env.MODELBUS_TOKEN }, label: "registered" };
+  }
   const as = process.env.MODELBUS_AS;
   if (as) return { identity: { kind: "cli", as }, label: `${as} (test identity)` };
   throw new Error(

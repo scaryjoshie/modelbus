@@ -17,6 +17,7 @@ export type HostKind =
   | "cursor-agent"
   | "copilot"
   | "hermes"
+  | "registered" // self-registered process (any program that knows about modelbus)
   | "unknown";
 
 /** How the daemon could deliver a message into this session. Ordered best-first. */
