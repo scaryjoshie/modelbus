@@ -143,6 +143,13 @@ export function newId(): string {
   return randomBytes(5).toString("base64url").replace(/[-_]/g, "x").slice(0, 7);
 }
 
+/** A display name safe for a roster row: single line, trimmed, capped at 40. */
+export function sanitizeName(raw: string): string {
+  const one = raw.replace(/\s+/g, " ").trim();
+  if (!one) return "agent";
+  return one.length <= 40 ? one : `${one.slice(0, 39).trimEnd()}…`;
+}
+
 export class Store {
   readonly db: Database;
 
@@ -221,9 +228,10 @@ export class Store {
         ]);
         // Follow the host's name until the user pins one (e.g. Codex titles a thread
         // after its first turn). Our id never changes.
-        if (agent.name_source === "host" && agent.name !== opts.preferredName) {
-          const free = this.freeName(opts.preferredName, agent.id);
-          if (free === opts.preferredName) {
+        const preferred = sanitizeName(opts.preferredName);
+        if (agent.name_source === "host" && agent.name !== preferred) {
+          const free = this.freeName(preferred, agent.id);
+          if (free === preferred) {
             this.db.run("UPDATE agents SET name = ? WHERE id = ?", [free, agent.id]);
           }
         }
@@ -237,7 +245,7 @@ export class Store {
       }
     }
     const id = newId();
-    const name = this.freeName(opts.preferredName);
+    const name = this.freeName(sanitizeName(opts.preferredName));
     this.db.run(
       "INSERT INTO agents (id, name, host, created_at, last_seen, state) VALUES (?, ?, ?, ?, ?, 'live')",
       [id, name, opts.host, now, now],
