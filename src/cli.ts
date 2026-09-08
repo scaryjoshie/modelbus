@@ -7,7 +7,7 @@ import type { LiveSession } from "./types.ts";
 
 /**
  * modelbus CLI. Test surface for the POC; see docs/poc-spec.md section 10.
- *   serve | scan | send | sync | who | log
+ *   serve | scan | send | sync | who | log | hook | attach | mcp | init
  * `--as <name>` is a TEST-ONLY identity override (spec section 6).
  */
 
@@ -155,6 +155,42 @@ async function main() {
       );
       return;
     }
+    case "hook": {
+      // Claude Code SessionStart hook: stdin carries the hook JSON. Stdout is added
+      // to the session's context, so print one useful line.
+      const { hookSessionStart } = await import("./providers/claude-code-setup.ts");
+      const stdin = await Bun.stdin.text();
+      const name = await hookSessionStart(stdin);
+      console.log(
+        `modelbus: this session is registered as "${name}". Messages from other agents arrive here automatically; reply with the modelbus send tool.`,
+      );
+      return;
+    }
+    case "attach": {
+      // Run inside a live Claude Code session (e.g. from its Bash tool) to register it
+      // without the hook. Needs the session's environment.
+      const { attachCurrentSession } = await import("./providers/claude-code-setup.ts");
+      console.log(`attached as "${await attachCurrentSession()}"`);
+      return;
+    }
+    case "mcp": {
+      const { runMcpShim } = await import("./mcp.ts");
+      await runMcpShim({ withSync: rest.includes("--with-sync") });
+      return;
+    }
+    case "init": {
+      const { claudeInitPlan, claudeInitWrite } = await import("./providers/claude-code-setup.ts");
+      const plan = claudeInitPlan();
+      console.log(`Claude Code (${plan.settingsPath}):`);
+      console.log(`  merge: ${JSON.stringify(plan.settingsPatch)}`);
+      console.log(`  run:   ${plan.mcpCommand.join(" ")}`);
+      if (!rest.includes("--write")) {
+        console.log("\ndry run; pass --write to apply");
+        return;
+      }
+      for (const line of await claudeInitWrite(plan)) console.log(`  ${line}`);
+      return;
+    }
     default:
       console.error(
         [
@@ -165,6 +201,10 @@ async function main() {
           "  sync --as A [--scope B] [--wait N]   read my inbox (test identity)",
           "  who [filter]                         registered agents",
           "  log [--conversation A,B]             messages with delivery state",
+          "  attach                               register the Claude Code session this runs inside",
+          "  hook claude-session-start            SessionStart hook entry (stdin JSON)",
+          "  mcp [--with-sync]                    stdio MCP shim (spawned by hosts)",
+          "  init [--write]                       show/apply Claude Code config",
         ].join("\n"),
       );
       process.exit(cmd === "help" ? 0 : 1);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { Api, ApiError } from "./core/api.ts";
 import { Store } from "./core/store.ts";
+import { ClaudeCodeWake } from "./providers/claude-code-wake.ts";
 
 /**
  * The daemon: one Store, one Api, one HTTP-over-unix-socket endpoint.
@@ -38,7 +39,7 @@ const Identity = z.discriminatedUnion("kind", [
 ]);
 
 const Request = z.object({
-  method: z.enum(["send", "pull", "who", "log", "bind", "ping"]),
+  method: z.enum(["send", "pull", "who", "log", "bind", "attach", "ping"]),
   params: z.record(z.string(), z.unknown()).default({}),
   identity: Identity.optional(),
 });
@@ -46,6 +47,8 @@ const Request = z.object({
 export function createDaemon(opts: { store?: Store; unix?: string } = {}) {
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store);
+  const claudeWake = new ClaudeCodeWake(api);
+  api.registerProvider(claudeWake);
   const unix = opts.unix ?? socketPath();
   mkdirSync(join(unix, ".."), { recursive: true });
   if (existsSync(unix)) unlinkSync(unix);
@@ -93,6 +96,25 @@ export function createDaemon(opts: { store?: Store; unix?: string } = {}) {
           case "bind": {
             const id = resolveIdentity(identity);
             return Response.json({ agent: store.agentById(id) });
+          }
+          case "attach": {
+            // A host session hands over what the daemon needs to deliver into it.
+            // Secrets stay in the provider's memory; nothing here is persisted.
+            const id = resolveIdentity(identity);
+            const p = z
+              .object({
+                sessionId: z.string(),
+                socketPath: z.string(),
+                token: z.string().optional(),
+                transcriptPath: z.string().optional(),
+              })
+              .parse(params);
+            claudeWake.attach(p.sessionId, {
+              socketPath: p.socketPath,
+              token: p.token,
+              transcriptPath: p.transcriptPath,
+            });
+            return Response.json({ agent: store.agentById(id), attached: true });
           }
           case "send": {
             const fromId = resolveIdentity(identity);
