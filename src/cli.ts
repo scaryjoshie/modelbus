@@ -1,8 +1,17 @@
 #!/usr/bin/env bun
+import { parseArgs } from "node:util";
+import { rpc } from "./client.ts";
+import type { Agent, InboxItem } from "./core/store.ts";
 import { scan } from "./scan.ts";
 import type { LiveSession } from "./types.ts";
 
-function age(ms?: number): string {
+/**
+ * modelbus CLI. Test surface for the POC; see docs/poc-spec.md section 10.
+ *   serve | scan | send | sync | who | log
+ * `--as <name>` is a TEST-ONLY identity override (spec section 6).
+ */
+
+function age(ms?: number | null): string {
   if (!ms) return "";
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
   if (s < 60) return `${s}s`;
@@ -24,7 +33,7 @@ function table(rows: string[][], header: string[]): string {
   return [fmt(header), fmt(widths.map((w) => "-".repeat(w))), ...rows.map(fmt)].join("\n");
 }
 
-function render(sessions: LiveSession[]): string {
+function renderScan(sessions: LiveSession[]): string {
   const rows = sessions.map((s) => [
     s.host,
     s.name.length > 32 ? `${s.name.slice(0, 31)}…` : s.name,
@@ -40,20 +49,129 @@ function render(sessions: LiveSession[]): string {
   return table(rows, ["host", "name", "pid", "status", "age", "cwd", "terminal", "reach"]);
 }
 
-const [cmd = "scan", ...rest] = process.argv.slice(2);
-
-switch (cmd) {
-  case "scan": {
-    const sessions = await scan();
-    if (rest.includes("--json")) {
-      console.log(JSON.stringify(sessions, null, 2));
-    } else {
-      console.log(render(sessions));
-      console.log(`\n${sessions.length} live sessions`);
-    }
-    break;
-  }
-  default:
-    console.error(`unknown command: ${cmd}\nusage: modelbus scan [--json]`);
-    process.exit(1);
+/** One inbox item as the model sees it: `name: body`, continuation lines indented. */
+export function renderItem(i: InboxItem): string {
+  const [first = "", ...rest] = i.body.split("\n");
+  return [`${i.from_name}: ${first}`, ...rest.map((l) => `  ${l}`)].join("\n");
 }
+
+function requireAs(values: { as?: string }): { kind: "cli"; as: string } {
+  if (!values.as) {
+    console.error("this command needs --as <name> (test-only identity)");
+    process.exit(2);
+  }
+  console.error(`(test identity: acting as "${values.as}")`);
+  return { kind: "cli", as: values.as };
+}
+
+const [cmd = "help", ...rest] = process.argv.slice(2);
+
+async function main() {
+  switch (cmd) {
+    case "serve": {
+      await import("./daemon.ts")
+        .then((m) => m.createDaemon())
+        .then((d) => {
+          console.log(`modelbus daemon pid ${process.pid} on ${d.unix}`);
+          const stop = () => {
+            d.stop();
+            process.exit(0);
+          };
+          process.on("SIGINT", stop);
+          process.on("SIGTERM", stop);
+        });
+      return;
+    }
+    case "scan": {
+      const sessions = await scan();
+      if (rest.includes("--json")) console.log(JSON.stringify(sessions, null, 2));
+      else console.log(`${renderScan(sessions)}\n\n${sessions.length} live sessions`);
+      return;
+    }
+    case "send": {
+      const { values, positionals } = parseArgs({
+        args: rest,
+        options: { as: { type: "string" }, to: { type: "string" }, wait: { type: "string" } },
+        allowPositionals: true,
+      });
+      const body = positionals.join(" ");
+      if (!values.to || !body) {
+        console.error("usage: modelbus send --as A --to B [--wait N] <text>");
+        process.exit(2);
+      }
+      const r = await rpc<{ to: Agent; wakeResult: string; reply?: InboxItem }>(
+        "send",
+        { to: values.to, body, wait: values.wait ? Number(values.wait) : undefined },
+        requireAs(values),
+      );
+      console.log(`sent to ${r.to.name} (wake: ${r.wakeResult})`);
+      if (values.wait) console.log(r.reply ? renderItem(r.reply) : `no reply in ${values.wait}s`);
+      return;
+    }
+    case "sync": {
+      const { values } = parseArgs({
+        args: rest,
+        options: { as: { type: "string" }, scope: { type: "string" }, wait: { type: "string" } },
+      });
+      const r = await rpc<{ items: InboxItem[]; more: number; moreElsewhere: number }>(
+        "pull",
+        { scope: values.scope, wait: values.wait ? Number(values.wait) : undefined },
+        requireAs(values),
+      );
+      if (!r.items.length) console.log("nothing");
+      else console.log(r.items.map(renderItem).join("\n"));
+      if (r.more) console.log(`[${r.more} more; call sync again]`);
+      if (r.moreElsewhere) console.log(`[${r.moreElsewhere} unread in other DMs]`);
+      return;
+    }
+    case "who": {
+      const r = await rpc<{ agents: Agent[] }>("who", { filter: rest[0] });
+      if (!r.agents.length) return console.log("nobody");
+      console.log(
+        table(
+          r.agents.map((a) => [a.name, a.host, a.state, age(a.last_seen)]),
+          ["name", "host", "state", "last-seen"],
+        ),
+      );
+      return;
+    }
+    case "log": {
+      const { values } = parseArgs({ args: rest, options: { conversation: { type: "string" } } });
+      const [a, b] = (values.conversation ?? "").split(",").filter(Boolean);
+      const r = await rpc<{ rows: Array<Record<string, unknown>> }>("log", { a, b });
+      console.log(
+        table(
+          r.rows.map((x) => [
+            String(x.seq),
+            String(x.id),
+            String(x.from_name),
+            String(x.to_name),
+            String(x.wake_result ?? ""),
+            x.received_at ? "received" : "unreceived",
+            String(x.body).split("\n")[0]?.slice(0, 60) ?? "",
+          ]),
+          ["seq", "id", "from", "to", "wake", "receipt", "body"],
+        ),
+      );
+      return;
+    }
+    default:
+      console.error(
+        [
+          "usage: modelbus <command>",
+          "  serve                                run the daemon",
+          "  scan [--json]                        live sessions on this machine",
+          "  send --as A --to B [--wait N] <text> send a DM (test identity)",
+          "  sync --as A [--scope B] [--wait N]   read my inbox (test identity)",
+          "  who [filter]                         registered agents",
+          "  log [--conversation A,B]             messages with delivery state",
+        ].join("\n"),
+      );
+      process.exit(cmd === "help" ? 0 : 1);
+  }
+}
+
+main().catch((e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
