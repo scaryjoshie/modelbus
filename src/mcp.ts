@@ -47,6 +47,21 @@ async function resolveIdentity(): Promise<{ identity: Identity; label: string }>
       label: name,
     };
   }
+  // A host that spawns shims without a per-session process tree (Aside) names the
+  // identity in the shim's configured environment, written by `init`.
+  const { MODELBUS_HOST, MODELBUS_KEY, MODELBUS_NAME } = process.env;
+  if (MODELBUS_HOST && MODELBUS_KEY && MODELBUS_NAME) {
+    return {
+      identity: {
+        kind: "self",
+        host: MODELBUS_HOST,
+        key: MODELBUS_KEY,
+        name: MODELBUS_NAME,
+        evidence: "configured shim environment",
+      },
+      label: MODELBUS_NAME,
+    };
+  }
   const as = process.env.MODELBUS_AS;
   if (as) return { identity: { kind: "cli", as }, label: `${as} (test identity)` };
   throw new Error(

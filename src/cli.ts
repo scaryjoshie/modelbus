@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
-import { rpc } from "./client.ts";
+import { type Identity, rpc } from "./client.ts";
 import type { Agent, InboxItem } from "./core/store.ts";
 import { scan } from "./scan.ts";
 import type { LiveSession } from "./types.ts";
@@ -55,13 +55,40 @@ export function renderItem(i: InboxItem): string {
   return [`${i.from_name}: ${first}`, ...rest.map((l) => `  ${l}`)].join("\n");
 }
 
-function requireAs(values: { as?: string }): { kind: "cli"; as: string } {
-  if (!values.as) {
-    console.error("this command needs --as <name> (test-only identity)");
-    process.exit(2);
+/**
+ * Identity for CLI send/sync: the host session this shell runs inside (a Claude Code
+ * or Codex session's Bash tool), or the test-only --as override.
+ */
+async function resolveCliIdentity(values: { as?: string }): Promise<Identity> {
+  if (values.as) {
+    console.error(`(test identity: acting as "${values.as}")`);
+    return { kind: "cli", as: values.as };
   }
-  console.error(`(test identity: acting as "${values.as}")`);
-  return { kind: "cli", as: values.as };
+  const { findClaudeSession } = await import("./hostid.ts");
+  const claude = await findClaudeSession();
+  if (claude) {
+    return {
+      kind: "self",
+      host: "claude-code",
+      key: claude.sessionId,
+      name: claude.name,
+      evidence: `cli ancestor pid ${claude.pid}`,
+    };
+  }
+  const { codexDisplayNames, findCodexSession } = await import("./providers/codex.ts");
+  const codex = await findCodexSession();
+  if (codex) {
+    const name = codexDisplayNames([codex.thread]).get(codex.thread.id) ?? "codex-1";
+    return {
+      kind: "self",
+      host: "codex",
+      key: codex.thread.id,
+      name,
+      evidence: `cli ancestor pid ${codex.pid}`,
+    };
+  }
+  console.error("not inside a known host session; pass --as <name> (test-only identity)");
+  process.exit(2);
 }
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
@@ -102,7 +129,7 @@ async function main() {
       const r = await rpc<{ to: Agent; wakeResult: string; reply?: InboxItem }>(
         "send",
         { to: values.to, body, wait: values.wait ? Number(values.wait) : undefined },
-        requireAs(values),
+        await resolveCliIdentity(values),
       );
       console.log(`sent to ${r.to.name} (wake: ${r.wakeResult})`);
       if (values.wait) console.log(r.reply ? renderItem(r.reply) : `no reply in ${values.wait}s`);
@@ -116,7 +143,7 @@ async function main() {
       const r = await rpc<{ items: InboxItem[]; more: number; moreElsewhere: number }>(
         "pull",
         { scope: values.scope, wait: values.wait ? Number(values.wait) : undefined },
-        requireAs(values),
+        await resolveCliIdentity(values),
       );
       if (!r.items.length) console.log("nothing");
       else console.log(r.items.map(renderItem).join("\n"));
@@ -229,8 +256,8 @@ async function main() {
           "usage: modelbus <command>",
           "  serve                                run the daemon",
           "  scan [--json]                        live sessions on this machine",
-          "  send --as A --to B [--wait N] <text> send a DM (test identity)",
-          "  sync --as A [--scope B] [--wait N]   read my inbox (test identity)",
+          "  send [--as A] --to B [--wait N] <text> send a DM (as this session, or test identity)",
+          "  sync [--as A] [--scope B] [--wait N]  read my inbox",
           "  who [filter] [--fresh]               agents on the bus (live sessions)",
           "  log [--conversation A,B]             messages with delivery state",
           "  attach                               register the Claude Code session this runs inside",
