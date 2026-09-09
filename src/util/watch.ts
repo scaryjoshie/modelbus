@@ -1,5 +1,9 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 
+const POLL_MS = 1000;
+/** Stop watching for a receipt after this long. */
+const GIVE_UP_MS = 15 * 60 * 1000;
+
 /** Current size of a file, to capture *before* a delivery so no entry is missed. */
 export function fileOffset(path: string): number {
   return existsSync(path) ? statSync(path).size : 0;
@@ -18,8 +22,8 @@ export function watchTranscript(opts: {
   intervalMs?: number;
   timeoutMs?: number;
 }): () => void {
-  const intervalMs = opts.intervalMs ?? 1000;
-  const timeoutMs = opts.timeoutMs ?? 15 * 60 * 1000;
+  const intervalMs = opts.intervalMs ?? POLL_MS;
+  const timeoutMs = opts.timeoutMs ?? GIVE_UP_MS;
   let offset = opts.fromOffset ?? fileOffset(opts.path);
   const started = Date.now();
   const check = () => {

@@ -137,10 +137,6 @@ function displayNames(roots: Thread[]): Map<string, string> {
   return names;
 }
 
-interface Handle {
-  threadId: string;
-}
-
 export class CodexAdapter implements HostAdapter {
   readonly host = "codex";
 
@@ -161,13 +157,9 @@ export class CodexAdapter implements HostAdapter {
       for (const t of f.threads) {
         const queueable = t.root && Boolean(t.rolloutPath);
         out.push({
-          handle: { threadId: t.id } satisfies Handle,
           key: t.id,
           name: names.get(t.id) ?? `codex-${t.id.slice(0, 4)}`,
-          durability: "session",
           relationship: t.root ? "top-level" : t.parentId ? "subagent" : "unknown",
-          parentKey: t.parentId,
-          evidence: `lock held by pid ${f.pid}; classified by ${t.evidence}`,
           reachable: queueable,
           note:
             t.root && !queueable
@@ -183,10 +175,6 @@ export class CodexAdapter implements HostAdapter {
     return out;
   }
 
-  handleFromKey(key: string): Handle {
-    return { threadId: key };
-  }
-
   async identifySelf(): Promise<SelfIdentity | null> {
     for (const a of await ancestors()) {
       if (a.comm.split("/").pop() !== "codex") continue;
@@ -197,22 +185,20 @@ export class CodexAdapter implements HostAdapter {
         host: this.host,
         key: root.id,
         name: displayNames([root]).get(root.id) ?? "codex-1",
-        evidence: `ancestor pid ${a.pid}`,
       };
     }
     return null;
   }
 
   async deliver(
-    handle: unknown,
+    threadId: string,
     text: string,
     marker: string,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
-    const h = handle as Handle;
-    const meta = threadMeta(h.threadId);
+    const meta = threadMeta(threadId);
     const fromOffset = meta.rolloutPath ? fileOffset(meta.rolloutPath) : 0;
-    const proc = Bun.spawn(["codex", "queue", "--thread", h.threadId, "--message", text], {
+    const proc = Bun.spawn(["codex", "queue", "--thread", threadId, "--message", text], {
       stdout: "pipe",
       stderr: "pipe",
     });

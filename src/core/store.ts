@@ -5,7 +5,6 @@ import { dirname } from "node:path";
 import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import type { Durability, Relationship } from "./adapter.ts";
 import type { DeliveryOutcome } from "./delivery.ts";
 import { migrationsDir } from "./paths.ts";
 import {
@@ -14,13 +13,9 @@ import {
   type ConversationRow,
   conversations,
   deliveries,
-  type HandleRow,
-  handles,
   type MessageRow,
   messages,
-  type PresenceRow,
   participants,
-  presence,
 } from "./schema.ts";
 
 /**
@@ -32,12 +27,8 @@ import {
  */
 
 export type Agent = AgentRow;
-export type Handle = HandleRow;
-export type Presence = PresenceRow;
 export type Conversation = ConversationRow;
 export type Message = MessageRow;
-export type AgentState = "live" | "gone" | "unknown";
-export type Attestation = "observed" | "attested";
 
 export interface InboxItem extends Message {
   fromName: string;
@@ -47,11 +38,13 @@ export interface InboxItem extends Message {
 export interface LogRow extends Message {
   fromName: string;
   toName: string;
-  wakeProvider: string | null;
-  wakeResult: string | null;
-  wakeDetail: string | null;
+  outcome: string | null;
+  detail: string | null;
   receivedAt: number | null;
 }
+
+/** Last resort when a thousand numbered names are taken. */
+const NAME_SUFFIX_LIMIT = 1000;
 
 export function newId(): string {
   return randomBytes(5).toString("base64url").replace(/[-_]/g, "x").slice(0, 7);
@@ -84,117 +77,47 @@ export class Store {
     return this.db.select().from(agents).where(eq(agents.id, id)).get();
   }
 
-  listAgents(states: AgentState[] = ["live"]): Agent[] {
+  agentByHostKey(host: string, hostKey: string): Agent | undefined {
     return this.db
       .select()
       .from(agents)
-      .where(inArray(agents.state, states))
-      .orderBy(desc(agents.lastSeen))
-      .all();
+      .where(and(eq(agents.host, host), eq(agents.hostKey, hostKey)))
+      .get();
+  }
+
+  /** Every agent ever bound, most recently seen first. */
+  listAgents(): Agent[] {
+    return this.db.select().from(agents).orderBy(desc(agents.lastSeen)).all();
   }
 
   touch(agentId: string): void {
     this.db.update(agents).set({ lastSeen: Date.now() }).where(eq(agents.id, agentId)).run();
   }
 
-  setState(agentId: string, state: AgentState): void {
-    this.db.update(agents).set({ state }).where(eq(agents.id, agentId)).run();
-  }
-
-  /** Pin a user-chosen name; the host's name no longer overrides it. */
-  rename(agentId: string, name: string): string {
-    const free = this.freeName(name, agentId);
-    this.db
-      .update(agents)
-      .set({ name: free, nameSource: "user" })
-      .where(eq(agents.id, agentId))
-      .run();
-    return free;
-  }
-
-  // ---- handles (identity) -------------------------------------------------
-
-  handleByKey(host: string, key: string): Handle | undefined {
-    return this.db
-      .select()
-      .from(handles)
-      .where(and(eq(handles.host, host), eq(handles.key, key)))
-      .get();
-  }
-
-  handleOf(agentId: string): Handle | undefined {
-    return this.db.select().from(handles).where(eq(handles.agentId, agentId)).get();
-  }
-
   /**
-   * Find the agent behind (host, key) or create one. The handle is stored sealed.
-   * Attestation only ever moves from observed to attested. The display name follows
-   * the host's until the user pins one.
+   * Find the agent behind (host, key) or create one. The display name follows the
+   * host's whenever that name is free.
    */
-  bind(opts: {
-    host: string;
-    key: string;
-    handle: unknown;
-    durability: Durability;
-    preferredName: string;
-    evidence: string;
-    attestation?: Attestation;
-  }): Agent {
+  bind(opts: { host: string; key: string; name: string }): Agent {
     const now = Date.now();
-    const existing = this.handleByKey(opts.host, opts.key);
-    const agent = existing && this.agentById(existing.agentId);
-    if (existing && agent) {
-      this.db
-        .update(agents)
-        .set({ lastSeen: now, state: "live" })
-        .where(eq(agents.id, agent.id))
-        .run();
-      if (opts.attestation === "attested" && existing.attestation !== "attested") {
-        this.db
-          .update(handles)
-          .set({
-            attestation: "attested",
-            evidence: opts.evidence,
-            handle: JSON.stringify(opts.handle),
-          })
-          .where(eq(handles.agentId, agent.id))
-          .run();
-      }
-      if (agent.nameSource === "host" && agent.name !== opts.preferredName) {
-        const free = this.freeName(opts.preferredName, agent.id);
-        if (free === opts.preferredName) {
-          this.db.update(agents).set({ name: free }).where(eq(agents.id, agent.id)).run();
-        }
-      }
-      return this.agentById(agent.id) as Agent;
+    const existing = this.agentByHostKey(opts.host, opts.key);
+    if (existing) {
+      const name =
+        existing.name !== opts.name && this.freeName(opts.name, existing.id) === opts.name
+          ? opts.name
+          : existing.name;
+      this.db.update(agents).set({ lastSeen: now, name }).where(eq(agents.id, existing.id)).run();
+      return { ...existing, lastSeen: now, name };
     }
-    const id = newId();
-    this.db.transaction((tx) => {
-      tx.insert(agents)
-        .values({
-          id,
-          name: this.freeName(opts.preferredName),
-          host: opts.host,
-          createdAt: now,
-          lastSeen: now,
-          state: "live",
-          nameSource: "host",
-        })
-        .run();
-      tx.insert(handles)
-        .values({
-          agentId: id,
-          host: opts.host,
-          key: opts.key,
-          handle: JSON.stringify(opts.handle),
-          durability: opts.durability,
-          evidence: opts.evidence,
-          attestation: opts.attestation ?? "observed",
-          boundAt: now,
-        })
-        .run();
-    });
-    return this.agentById(id) as Agent;
+    const agent: Agent = {
+      id: newId(),
+      name: this.freeName(opts.name),
+      host: opts.host,
+      hostKey: opts.key,
+      lastSeen: now,
+    };
+    this.db.insert(agents).values(agent).run();
+    return agent;
   }
 
   private freeName(preferred: string, forAgentId?: string): string {
@@ -205,56 +128,11 @@ export class Store {
     if (!taken(preferred)) return preferred;
     const m = preferred.match(/^(.*)-(\d+)$/);
     const base = m ? (m[1] as string) : preferred;
-    for (let n = m ? Number(m[2]) + 1 : 2; n < 1000; n++) {
+    for (let n = m ? Number(m[2]) + 1 : 2; n < NAME_SUFFIX_LIMIT; n++) {
       const candidate = `${base}-${n}`;
       if (!taken(candidate)) return candidate;
     }
     return `${preferred}-${newId()}`;
-  }
-
-  // ---- presence -----------------------------------------------------------
-
-  presenceOf(agentId: string): Presence | undefined {
-    return this.db.select().from(presence).where(eq(presence.agentId, agentId)).get();
-  }
-
-  upsertPresence(
-    agentId: string,
-    p: {
-      pid?: number;
-      cwd?: string;
-      status?: string;
-      title?: string;
-      relationship: Relationship;
-      parentKey?: string;
-      reachable: boolean;
-      note?: string;
-      startedAt?: number;
-    },
-  ): void {
-    const now = Date.now();
-    const row = {
-      pid: p.pid ?? null,
-      cwd: p.cwd ?? null,
-      status: p.status ?? null,
-      title: p.title ?? null,
-      relationship: p.relationship,
-      parentKey: p.parentKey ?? null,
-      reachable: p.reachable,
-      note: p.note ?? null,
-      startedAt: p.startedAt ?? null,
-      lastSeen: now,
-    };
-    this.db
-      .insert(presence)
-      .values({ agentId, firstSeen: now, ...row })
-      .onConflictDoUpdate({ target: presence.agentId, set: row })
-      .run();
-    this.db
-      .update(agents)
-      .set({ lastSeen: now, state: "live" })
-      .where(eq(agents.id, agentId))
-      .run();
   }
 
   // ---- conversations ------------------------------------------------------
@@ -264,21 +142,17 @@ export class Store {
     const key = `dm:${[a, b].sort().join("+")}`;
     const found = this.db.select().from(conversations).where(eq(conversations.key, key)).get();
     if (found) return found;
-    const id = newId();
+    const conv: Conversation = { id: newId(), kind: "dm", key, createdAt: Date.now() };
     this.db.transaction((tx) => {
-      tx.insert(conversations).values({ id, kind: "dm", key, createdAt: Date.now() }).run();
+      tx.insert(conversations).values(conv).run();
       tx.insert(participants)
         .values([
-          { conversationId: id, agentId: a },
-          { conversationId: id, agentId: b },
+          { conversationId: conv.id, agentId: a },
+          { conversationId: conv.id, agentId: b },
         ])
         .run();
     });
-    return this.db
-      .select()
-      .from(conversations)
-      .where(eq(conversations.id, id))
-      .get() as Conversation;
+    return conv;
   }
 
   participants(conversationId: string): string[] {
@@ -363,21 +237,10 @@ export class Store {
       .run();
   }
 
-  recordWake(
-    messageId: string,
-    agentId: string,
-    provider: string,
-    outcome: DeliveryOutcome,
-    detail?: string,
-  ): void {
+  recordDelivery(messageId: string, agentId: string, outcome: DeliveryOutcome, detail?: string) {
     this.db
       .update(deliveries)
-      .set({
-        wakeProvider: provider,
-        wakeAttemptedAt: Date.now(),
-        wakeResult: outcome,
-        wakeDetail: detail ?? null,
-      })
+      .set({ outcome, detail: detail ?? null })
       .where(and(eq(deliveries.messageId, messageId), eq(deliveries.toAgentId, agentId)))
       .run();
   }
@@ -435,8 +298,7 @@ export class Store {
       SELECT m.seq, m.id, m.conversation_id AS conversationId, m.from_agent_id AS fromAgentId,
              m.body, m.created_at AS createdAt,
              fa.name AS fromName, ta.name AS toName,
-             d.wake_provider AS wakeProvider, d.wake_result AS wakeResult,
-             d.wake_detail AS wakeDetail, d.received_at AS receivedAt
+             d.outcome, d.detail, d.received_at AS receivedAt
       FROM messages m
       JOIN agents fa ON fa.id = m.from_agent_id
       JOIN deliveries d ON d.message_id = m.id

@@ -8,16 +8,8 @@ import { Api, ApiError } from "./api.ts";
 import { GUARDS } from "./guards.ts";
 import { Store } from "./store.ts";
 
-function bindTest(store: Store, key: string, name: string) {
-  return store.bind({
-    host: "test",
-    key,
-    handle: { key },
-    durability: "session",
-    preferredName: name,
-    evidence: "test",
-  });
-}
+const bindTest = (store: Store, key: string, name: string) =>
+  store.bind({ host: "test", key, name });
 
 function fresh() {
   const store = new Store(":memory:");
@@ -43,12 +35,14 @@ describe("dm basics", () => {
     expect((await api.pull({ agentId: a.id })).items).toHaveLength(0);
   });
 
-  test("binding is identity; names de-duplicate", () => {
+  test("binding is identity; names de-duplicate and follow the host", () => {
     const { store, a } = fresh();
     const again = bindTest(store, "a", "alice");
     expect(again.id).toBe(a.id);
     const clash = bindTest(store, "c", "alice");
     expect(clash.name).toBe("alice-2"); // same host name, different session: de-duplicated
+    expect(bindTest(store, "a", "alice renamed").name).toBe("alice renamed");
+    expect(bindTest(store, "c", "alice renamed").name).toBe("alice-2"); // taken: keeps its own
   });
 
   test("unknown recipient and self-send are errors", async () => {
@@ -69,9 +63,9 @@ describe("guards", () => {
     await expect(api.send({ fromId: a.id, to: "bob", body: "same" })).rejects.toThrow(/identical/);
   });
 
-  test("rate limit refuses the 11th send in a minute", async () => {
+  test("rate limit refuses the send after the limit", async () => {
     const { api, a } = fresh();
-    for (let i = 0; i < GUARDS.RATE_LIMIT_PER_MINUTE; i++) {
+    for (let i = 0; i < GUARDS.RATE_LIMIT; i++) {
       await api.send({ fromId: a.id, to: "bob", body: `m${i}` });
     }
     await expect(api.send({ fromId: a.id, to: "bob", body: "one too many" })).rejects.toThrow(
@@ -127,66 +121,67 @@ describe("waiting", () => {
   });
 });
 
-describe("protocol: registration", () => {
+describe("protocol", () => {
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "modelbus-proto-"));
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("register, send with token, receive by pull and by deliver command", async () => {
+  test("register: token identity, live while calling in, receives by pull", async () => {
     const unix = join(dir, "d.sock");
-    const out = join(dir, "inbox.txt");
     const d = createDaemon({ store: new Store(join(dir, "d.db")), unix, track: false });
     try {
-      const app = await rpc<{ agent: { name: string }; token: string }>(
-        "register",
-        { name: "app", host: "test app", deliver: `cat >> ${out}` },
-        undefined,
-        unix,
-      );
-      const other = await rpc<{ agent: { name: string }; token: string }>(
-        "register",
-        { name: "other" },
-        undefined,
-        unix,
-      );
+      const app = await rpc("register", { name: "app" }, undefined, unix);
+      const other = await rpc("register", { name: "other" }, undefined, unix);
       expect(app.agent.name).toBe("app");
       expect(app.token.length).toBeGreaterThan(8);
+      const who = await rpc("who", {}, undefined, unix);
+      expect(who.agents.map((a) => `${a.name}:${a.host}`).sort()).toEqual([
+        "app:registered",
+        "other:registered",
+      ]);
 
-      // other -> app: delivered by running app's command
-      const sent = await rpc<{ delivery: { outcome: string } }>(
+      const sent = await rpc(
         "send",
         { to: "app", body: "hi app" },
         { kind: "token", token: other.token },
         unix,
       );
-      expect(sent.delivery.outcome).toBe("delivered");
-      expect(await Bun.file(out).text()).toContain("hi app");
-      expect(await Bun.file(out).text()).toContain("[modelbus #");
+      expect(sent.delivery.outcome).toBe("waiting");
+      const pulled = await rpc("pull", {}, { kind: "token", token: app.token }, unix);
+      expect(pulled.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["other: hi app"]);
+      expect(pulled.items[0]?.body).not.toContain("[modelbus"); // pull returns the bare body
 
-      // app -> other: other has no deliver command, so it pulls
-      await rpc(
-        "send",
-        { to: "other", body: "hi other" },
-        { kind: "token", token: app.token },
-        unix,
-      );
-      const pulled = await rpc<{ items: Array<{ body: string; fromName: string }> }>(
-        "pull",
-        {},
-        { kind: "token", token: other.token },
-        unix,
-      );
-      expect(pulled.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["app: hi other"]);
-
-      // an unknown token is refused
       await expect(
         rpc("send", { to: "app", body: "x" }, { kind: "token", token: "nope-nope-nope" }, unix),
       ).rejects.toThrow(/unknown token/);
     } finally {
       d.stop();
     }
+  });
+
+  test("self identity over the socket: send, pull, who, log; survives restart", async () => {
+    const unix = join(dir, "d.sock");
+    const path = join(dir, "d.db");
+    let d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
+    const alice = { kind: "self", host: "cli", key: "a", name: "alice" } as const;
+    const bob = { kind: "self", host: "cli", key: "b", name: "bob" } as const;
+    await rpc("bind", {}, bob, unix);
+    const sent = await rpc("send", { to: "bob", body: "over the wire" }, alice, unix);
+    expect(sent.to.name).toBe("bob");
+    expect(sent.delivery.outcome).toBe("waiting");
+    const who = await rpc("who", {}, undefined, unix);
+    expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
+    d.stop();
+
+    d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
+    expect((await rpc("who", {}, undefined, unix)).agents).toHaveLength(0); // nobody has called in yet
+    const pulled = await rpc("pull", {}, bob, unix);
+    expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
+    const log = await rpc("log", {}, undefined, unix);
+    expect(log.rows[0]?.receivedAt).not.toBeNull();
+    d.stop();
   });
 });
 
@@ -213,37 +208,5 @@ describe("persistence", () => {
     expect(r.items.map((i) => i.body)).toEqual(["before restart"]);
     expect((await api.pull({ agentId: b2.id })).items).toHaveLength(0);
     store.close();
-  });
-
-  test("daemon over unix socket: send, pull, who, log; survives restart", async () => {
-    const unix = join(dir, "d.sock");
-    const path = join(dir, "d.db");
-    let d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
-    const alice = { kind: "cli", as: "alice" } as const;
-    const bob = { kind: "cli", as: "bob" } as const;
-    await rpc("bind", {}, bob, unix);
-    const sent = await rpc<{ to: { name: string }; delivery: { outcome: string } }>(
-      "send",
-      { to: "bob", body: "over the wire" },
-      alice,
-      unix,
-    );
-    expect(sent.to.name).toBe("bob");
-    expect(sent.delivery.outcome).toBe("waiting");
-    const who = await rpc<{ agents: Array<{ name: string }> }>("who", {}, undefined, unix);
-    expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
-    d.stop();
-
-    d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
-    const pulled = await rpc<{ items: Array<{ body: string }> }>("pull", {}, bob, unix);
-    expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
-    const log = await rpc<{ rows: Array<{ receivedAt: number | null }> }>(
-      "log",
-      {},
-      undefined,
-      unix,
-    );
-    expect(log.rows[0]?.receivedAt).not.toBeNull();
-    d.stop();
   });
 });

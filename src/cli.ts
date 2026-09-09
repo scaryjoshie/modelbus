@@ -1,14 +1,11 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import { allAdapters } from "./adapters/index.ts";
-import type { Identity } from "./client.ts";
-import { rpc } from "./client.ts";
+import { type Identity, type MethodName, type Params, rpc } from "./client.ts";
 import type { Command, CommandContext } from "./core/adapter.ts";
-import type { LogRow } from "./core/store.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
-import type { RosterEntry } from "./tracker.ts";
 
 /**
  * modelbus CLI: a thin client of the daemon. Bus verbs live here; host-specific
@@ -44,6 +41,7 @@ async function identityFor(values: { as?: string; token?: string }): Promise<Ide
 
 const commands: Record<string, Command> = {
   serve: {
+    standalone: true,
     usage: "serve                                  run the daemon in the foreground",
     async run() {
       const { createDaemon } = await import("./daemon.ts");
@@ -72,11 +70,7 @@ const commands: Record<string, Command> = {
       });
       const body = positionals.join(" ");
       if (!values.to || !body) throw new Error("usage: modelbus send --to <name> <text>");
-      const r = await rpc<{
-        to: { name: string };
-        delivery: { outcome: string; detail?: string };
-        reply?: Parameters<typeof renderItem>[0];
-      }>(
+      const r = await rpc(
         "send",
         { to: values.to, body, wait: values.wait ? Number(values.wait) : undefined },
         await identityFor(values),
@@ -100,11 +94,7 @@ const commands: Record<string, Command> = {
           wait: { type: "string" },
         },
       });
-      const r = await rpc<{
-        items: Parameters<typeof renderItem>[0][];
-        more: number;
-        moreElsewhere: number;
-      }>(
+      const r = await rpc(
         "pull",
         { scope: values.scope, wait: values.wait ? Number(values.wait) : undefined },
         await identityFor(values),
@@ -118,19 +108,18 @@ const commands: Record<string, Command> = {
     usage: "who [filter] [--fresh]                 agents on the bus",
     async run({ args }) {
       const filter = args.find((x) => !x.startsWith("--"));
-      const r = await rpc<{ agents: RosterEntry[] }>("who", {
+      const r = await rpc("who", {
         filter,
         fresh: args.includes("--fresh"),
       });
       if (!r.agents.length) return console.log("nobody");
       console.log(
         table(
-          ["name", "host", "delivery", "identity", "status", "cwd", "last-seen"],
+          ["name", "host", "delivery", "status", "cwd", "last-seen"],
           r.agents.map((a) => [
             a.name,
             a.host,
-            a.reachable ? "reachable" : `no (${a.note ?? "?"})`,
-            a.attestation ?? "",
+            a.reachable ? (a.note ?? "reachable") : `no (${a.note ?? "?"})`,
             a.status ?? "",
             shortCwd(a.cwd),
             age(a.lastSeen),
@@ -144,7 +133,7 @@ const commands: Record<string, Command> = {
     async run({ args }) {
       const { values } = parseArgs({ args, options: { conversation: { type: "string" } } });
       const [a, b] = (values.conversation ?? "").split(",").filter(Boolean);
-      const r = await rpc<{ rows: LogRow[] }>("log", { a, b });
+      const r = await rpc("log", { a, b });
       console.log(
         table(
           ["seq", "id", "from", "to", "delivery", "receipt", "body"],
@@ -153,7 +142,7 @@ const commands: Record<string, Command> = {
             x.id,
             x.fromName,
             x.toName,
-            x.wakeResult ?? "",
+            x.outcome ?? "",
             x.receivedAt ? "received" : "unreceived",
             x.body.split("\n")[0]?.slice(0, 60) ?? "",
           ]),
@@ -162,31 +151,17 @@ const commands: Record<string, Command> = {
     },
   },
   register: {
-    usage:
-      "register --name N [--host L] [--pid P] [--deliver CMD]   join as any process; prints a token",
+    usage: "register --name N                      join as any process; prints a token",
     async run({ args }) {
-      const { values } = parseArgs({
-        args,
-        options: {
-          name: { type: "string" },
-          host: { type: "string" },
-          pid: { type: "string" },
-          deliver: { type: "string" },
-        },
-      });
+      const { values } = parseArgs({ args, options: { name: { type: "string" } } });
       if (!values.name) throw new Error("usage: modelbus register --name <name>");
-      await ensureDaemon();
-      const r = await rpc<{ agent: { name: string }; token: string }>("register", {
-        name: values.name,
-        host: values.host,
-        pid: values.pid ? Number(values.pid) : undefined,
-        deliver: values.deliver,
-      });
+      const r = await rpc("register", { name: values.name });
       console.error(`registered as "${r.agent.name}"; use --token or MODELBUS_TOKEN`);
       console.log(r.token);
     },
   },
   mcp: {
+    standalone: true,
     usage: "mcp [--with-sync]                      stdio MCP shim (spawned by hosts)",
     async run({ args }) {
       const { runMcpShim } = await import("./mcp.ts");
@@ -194,6 +169,7 @@ const commands: Record<string, Command> = {
     },
   },
   init: {
+    standalone: true,
     usage: "init [--write]                         show/apply host configuration",
     async run({ args }) {
       const plans = allAdapters()
@@ -219,10 +195,12 @@ if (!cmd) {
 const ctx: CommandContext = {
   args,
   stdin: () => Bun.stdin.text(),
-  rpc: (method, params, identity) => rpc(method, params, identity as Identity | undefined),
+  // Adapter commands are written against the loose CommandContext signature.
+  rpc: <T>(method: string, params: Record<string, unknown>, identity?: unknown) =>
+    rpc(method as MethodName, params as Params<MethodName>, identity as Identity) as Promise<T>,
   ensureDaemon,
 };
-cmd.run(ctx).catch((e) => {
+(cmd.standalone ? cmd.run(ctx) : ensureDaemon().then(() => cmd.run(ctx))).catch((e) => {
   console.error(e instanceof Error ? e.message : String(e));
   process.exit(1);
 });

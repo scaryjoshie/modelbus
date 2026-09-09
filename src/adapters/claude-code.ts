@@ -97,9 +97,7 @@ async function currentSession(): Promise<Session | null> {
   return null;
 }
 
-interface Handle {
-  sessionId: string;
-}
+const SOCKET_TIMEOUT_MS = 5000;
 
 interface Attached {
   socketPath?: string;
@@ -114,12 +112,9 @@ export class ClaudeCodeAdapter implements HostAdapter {
   async observe(): Promise<Observation[]> {
     const procs = new Map((await listProcesses()).map((p) => [p.pid, p]));
     return liveSessions().map((s) => ({
-      handle: { sessionId: s.sessionId } satisfies Handle,
       key: s.sessionId,
       name: s.name,
-      durability: "session",
       relationship: "top-level",
-      evidence: `registry ~/.claude/sessions/${s.pid}.json`,
       reachable: Boolean(s.socketPath),
       note: s.socketPath ? undefined : "no inbox socket",
       pid: s.pid,
@@ -127,10 +122,6 @@ export class ClaudeCodeAdapter implements HostAdapter {
       status: s.status,
       startedAt: procs.get(s.pid)?.startedAt,
     }));
-  }
-
-  handleFromKey(key: string): Handle {
-    return { sessionId: key };
   }
 
   async identifySelf(): Promise<SelfIdentity | null> {
@@ -141,7 +132,6 @@ export class ClaudeCodeAdapter implements HostAdapter {
       host: this.host,
       key: s.sessionId,
       name: s.name,
-      evidence: `ancestor pid ${s.pid}`,
       attach: socketPath
         ? {
             socketPath,
@@ -152,11 +142,10 @@ export class ClaudeCodeAdapter implements HostAdapter {
     };
   }
 
-  attach(handle: unknown, info: Record<string, unknown>): void {
-    const h = handle as Handle;
-    const prev = this.attached.get(h.sessionId) ?? {};
+  attach(sessionId: string, info: Record<string, unknown>): void {
+    const prev = this.attached.get(sessionId) ?? {};
     const str = (v: unknown, fallback?: string) => (typeof v === "string" ? v : fallback);
-    this.attached.set(h.sessionId, {
+    this.attached.set(sessionId, {
       socketPath: str(info.socketPath, prev.socketPath),
       token: str(info.token, prev.token),
       transcriptPath: str(info.transcriptPath, prev.transcriptPath),
@@ -164,14 +153,13 @@ export class ClaudeCodeAdapter implements HostAdapter {
   }
 
   async deliver(
-    handle: unknown,
+    sessionId: string,
     text: string,
     marker: string,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
-    const h = handle as Handle;
-    const a = this.attached.get(h.sessionId) ?? {};
-    const reg = liveSessions().find((s) => s.sessionId === h.sessionId);
+    const a = this.attached.get(sessionId) ?? {};
+    const reg = liveSessions().find((s) => s.sessionId === sessionId);
     const socketPath = a.socketPath ?? reg?.socketPath;
     const transcriptPath = a.transcriptPath ?? reg?.transcriptPath;
     if (!socketPath) return unavailable("no inbox socket");
@@ -205,7 +193,6 @@ export class ClaudeCodeAdapter implements HostAdapter {
         host: me.host,
         key: hint.session_id ?? me.key,
         name: me.name,
-        evidence: `hook/attach ${me.evidence}`,
       };
       const r = await ctx.rpc<{ agent: { name: string } }>(
         "attach",
@@ -237,6 +224,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
       post: {
         usage:
           "post                                   (internal) write stdin JSON to an inbox socket",
+        standalone: true,
         run: async (ctx) => {
           const p = JSON.parse(await ctx.stdin()) as {
             socketPath: string;
@@ -320,7 +308,7 @@ async function postViaHelper(socketPath: string, token: string | undefined, text
 function post(socketPath: string, token: string | undefined, text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const sock = createConnection({ path: socketPath });
-    sock.setTimeout(5000);
+    sock.setTimeout(SOCKET_TIMEOUT_MS);
     sock.on("connect", () => {
       const lines: string[] = [];
       if (token) lines.push(JSON.stringify({ type: "auth", token }));

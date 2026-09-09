@@ -1,4 +1,4 @@
-# modelbus architecture (as built, 2026-09-08)
+# modelbus architecture (as built, 2026-09-09)
 
 This describes the code that exists, not plans. For open questions see
 `design-notes.md`; for the running status and lessons see `handoff.md`.
@@ -20,11 +20,11 @@ src/
                guards.ts, adapter.ts (host interface), delivery.ts (result type),
                paths.ts
   util/        ps.ts (process table, ancestors), watch.ts (transcript watcher)
-  adapters/    claude-code.ts, codex.ts, aside.ts, registered.ts, index.ts
-  daemon.ts    composition root: store + api + tracker + adapters + RPC socket
-  tracker.ts   reconcile loop, identity binding, delivery dispatch, roster
-  client.ts    rpc() over the unix socket      identity.ts  "who am I" for shim/CLI
-  ensure.ts    start the daemon on demand      render.ts    one-line message text
+  adapters/    claude-code.ts, codex.ts, aside.ts, index.ts
+  daemon.ts    composition root: store + api + tracker + adapters + RPC method table
+  tracker.ts   reconcile loop, presence (in memory), delivery dispatch, roster
+  client.ts    typed rpc() over the unix socket   identity.ts  "who am I" for shim/CLI
+  ensure.ts    start the daemon on demand         render.ts    one-line message text
   cli.ts       command table (bus verbs + adapter-contributed verbs)
   mcp.ts       the stdio MCP shim hosts spawn per session
 scripts/check-layers.ts   fails the build on layering violations
@@ -36,16 +36,31 @@ nothing else; `adapters/` import only core and util; everything else may import
 anything. A host's name may appear only inside its adapter. `bun run check` runs
 the type check, lint, layering check, and tests.
 
-## 3. Data model (`core/schema.ts`)
+## 3. The model
 
-| Table | Row per | Purpose |
+Core handles communication between agents that have a line. A *line* is whatever
+accepts text for an agent, and someone holds it:
+
+- For a discovered host (Claude Code, Codex, Aside) the adapter holds the line: it
+  knows how to find the session and push into it.
+- For a registered process the process holds its own line: it calls `pull` on the
+  daemon and messages are handed back through that call.
+
+Core does not distinguish the two. `send` logs the message, asks whoever holds the
+recipient's line to deliver it, records the outcome, and wakes anyone waiting.
+
+## 4. Data model (`core/schema.ts`)
+
+Only what must survive a daemon restart is stored: who the agents are and what was
+said. Presence is re-observed every few seconds and lives in the tracker's memory.
+
+| Table | Row per | Columns |
 |---|---|---|
-| `agents` | agent | ours: `id` (permanent, opaque), `name` (display; follows the host's name until `nameSource = user`), `host`, `state` live/gone/unknown, `lastSeen` |
-| `handles` | agent | the host's identity for the session, `handle` (JSON, sealed: only its adapter reads it), `key` (opaque equality string, unique per host), `durability` process/session/permanent, `attestation` observed/attested, `evidence` |
-| `presence` | agent | last observation: pid, cwd, status, title, relationship, reachable, note |
+| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's), `host` (which adapter holds the line), `hostKey` (the host's own id, opaque to core), `lastSeen` |
 | `conversations` | pair | `kind = dm`, `key = dm:<sorted ids>` so there is one DM per pair |
-| `messages` | message | `seq` (global order), `id` (short random; appears in delivered text), conversation, sender, body |
-| `deliveries` | message × recipient | `wakeResult` (DeliveryOutcome), `wakeDetail`, `wakeAttemptedAt`, `receivedAt` (null = unread) |
+| `participants` | conversation × agent | ready for groups |
+| `messages` | message | `seq` (global order), `id` (short random; the receipt marker), conversation, sender, body |
+| `deliveries` | message × recipient | `outcome` (DeliveryOutcome), `detail`, `receivedAt` (null = unread; this is the read receipt) |
 
 Inbox state is per delivery row, not a per-agent cursor, so a scoped read or a
 send-and-wait consumes one conversation without skipping others.
@@ -53,100 +68,97 @@ send-and-wait consumes one conversation without skipping others.
 Schema changes: edit `schema.ts`, run `bun run migrate:generate`, commit the
 migration. The store applies pending migrations on open.
 
-## 4. Identity
+## 5. Identity
 
-Three layers, never mixed:
-
-- **Agent id**: ours, permanent, the only identifier that appears in messages,
-  logs, or `who`.
-- **Handle + key**: produced by the host's adapter. The core stores the handle
-  sealed and uses the key only for equality. Same (host, key) = same agent, across
-  daemon restarts and host restarts that keep the host's identity (`--resume`,
-  `codex resume`).
-- **Attestation**: `observed` (the tracker saw the session from outside) or
-  `attested` (the session identified itself via hook or shim). Only moves upward.
+- **Agent id**: ours, permanent, the only identifier in messages, logs, or `who`.
+- **(host, hostKey)**: how the agent is recognized again. The adapter chooses the
+  key (Claude's session id, Codex's thread id, Aside's session id, a registration
+  token). Same pair = same agent, across daemon restarts and host restarts that keep
+  the host's identity (`--resume`, `codex resume`). Core compares keys and hands
+  them back to the adapter; it never interprets them.
 
 Callers identify themselves on the RPC with one of:
 
 | kind | fields | resolved by |
 |---|---|---|
-| `self` | host, key, name, evidence | `tracker.identify`: bind attested; handle rebuilt by the adapter |
-| `token` | token | lookup in `handles` (host `registered`); touches the adapter's contact clock |
-| `cli` | as | test only; prints a warning |
+| `self` | host, key, name | `tracker.identify`: bind by (host, key), record contact |
+| `token` | token | agent with host `registered` and that key; record contact |
 
-`identity.ts` decides which to send from inside a process: explicit `--as`, then
-`MODELBUS_TOKEN`, then `MODELBUS_HOST/KEY/NAME` (for hosts that run one shim for
-many sessions), then each adapter's `identifySelf()` (ancestor pids), then
-`MODELBUS_AS`.
+`identity.ts` decides which to send from inside a process: explicit `--as` (a
+`self` identity on the pseudo-host `cli`, test only), then `MODELBUS_TOKEN`, then
+`MODELBUS_HOST/KEY/NAME` (for hosts that run one shim for many sessions), then each
+adapter's `identifySelf()` (ancestor pids), then `MODELBUS_AS`.
 
-## 5. The adapter interface (`core/adapter.ts`)
+## 6. The adapter interface (`core/adapter.ts`)
 
 ```
-observe()                      -> Observation[]   what is live on this host now
-handleFromKey(key)             -> handle          rebuild a sealed handle
-identifySelf?()                -> SelfIdentity    am I inside one of your sessions?
-deliver?(handle, text, marker, onReceipt) -> DeliveryResult
-attach?(handle, info)                           runtime secrets a session hands over
-configure?()                   -> ConfigurePlan  what `init` writes
-commands?()                    -> CLI verbs this host needs
+observe()                               -> Observation[]   what is live on this host now
+identifySelf?()                         -> SelfIdentity    am I inside one of your sessions?
+deliver?(key, text, marker, onReceipt)  -> DeliveryResult
+attach?(key, info)                                         runtime secrets a session hands over
+configure?()                            -> ConfigurePlan   what `init` writes
+commands?()                             -> CLI verbs this host needs
 ```
 
-An `Observation` carries the handle, key, preferred name, durability,
-relationship (`top-level` | `subagent` | `unknown`), evidence, reachability, and
-display facts. Only `top-level` observations become agents.
+An `Observation` is the key, the preferred name, the relationship (`top-level` |
+`subagent` | `unknown`), reachability, and display facts (note, pid, cwd, status,
+title). Only `top-level` observations become agents. Anything else an adapter needs
+at delivery time it re-derives from its host, or keeps in its own memory (Claude
+tokens, Aside's session-to-account map).
 
 `DeliveryResult.outcome` is one of `delivered`, `delivered-unattested`, `waiting`
 (no push path; recipient must pull), `returned-to-waiter` (given to a blocked
 send-and-wait instead of pushed), `unavailable`, `error`; `detail` says why or how.
 
-## 6. The tracker (`tracker.ts`)
+## 7. The tracker (`tracker.ts`)
 
-Every 3 s, and on demand: for each adapter, `observe()`; for each top-level
-observation, `store.bind()` (find by key or create) and refresh presence; agents of
-that host not seen this pass become `gone`. A throwing adapter is skipped, never
-marking anything gone. `identify()` handles self-identification; `attach()` forwards
-runtime info to the adapter; `deliver()` looks up the agent's handle and adapter and
-returns the adapter's `DeliveryResult` (or `error` if it threw); `list()` builds the
-roster from agents + presence + handles, reachable first.
+Every 3 s, and on demand: for each adapter, `observe()`; each top-level observation
+is bound to an agent by (host, key) and its display facts are kept in memory as
+that host's current presence. A throwing adapter keeps its previous presence. An
+agent is live if its adapter saw it on the last pass, or if it called in itself
+within the last ten minutes (`touch`, from `identify` and token use). `deliver()`
+routes to the agent's adapter with its key; no adapter, or no `deliver`, means
+`waiting`. `list()` is the roster: live agents, reachable first.
 
-## 7. A send, end to end (`core/api.ts`)
+## 8. A send, end to end (`core/api.ts`)
 
 1. RPC `send { to, body, wait? }` with an identity. The method table validates
    params and resolves the identity to the sender's agent id.
 2. Recipient resolved by name (after one reconcile pass if unknown).
 3. Guards: body ≤ 64 KB, not identical to something the sender wrote in this DM in
-   the last 60 s, sender under 10 sends/minute. Refusals are `ApiError` → HTTP 422.
+   the last 60 s, sender under 10 sends per minute. Refusals are `ApiError` → 422.
 4. Message + delivery row inserted in one transaction; an in-process event fires so
    long-polls wake.
-5. Delivery via the injected `deliver` (the tracker's). Result stored on the row.
+5. Delivery via the injected `deliver` (the tracker's). Outcome stored on the row.
    If the recipient is blocked in send-and-wait for a reply from this sender, the
    message is returned through that call instead (`returned-to-waiter`).
 6. Receipt is separate: the adapter captured the host transcript's size before
    delivering and polls it for a line containing `#<message id>` in the host's
    "user message" shape; then `receivedAt` is set.
-7. With `wait`, the API blocks (up to 600 s) for the next message from the
+7. With `wait`, the API blocks (up to 240 s) for the next message from the
    recipient in this DM and returns it inline.
 
 `pull { scope?, wait?, limit? }` returns unreceived deliveries (oldest first, cap
-50), marks them received, and reports `more` and `moreElsewhere`. It exists for
-pull-only recipients and explicit catch-up; hosts with a push path never need it.
+50), marks them received, and reports `more` and `moreElsewhere`. It is the line
+for pull-only recipients and the explicit catch-up (`sync`) for everyone else.
 
 Delivered text is one attribution line plus the body:
 `[modelbus #<id>] from <name>` — no instructions.
 
-## 8. Hosts
+## 9. Hosts
 
-| Host | Identity (sealed) | Observe | Deliver | Receipt | `init` writes |
+| Host | Key | Observe | Deliver | Receipt | `init` writes |
 |---|---|---|---|---|---|
 | Claude Code | session id from `~/.claude/sessions/<pid>.json` | registry files with a live pid | post to the session's inbox socket via a short-lived helper, with the token if attached | `~/.claude/projects/.../<session>.jsonl`: `queue-operation remove` or a `user` entry | user settings: allow `mcp__modelbus__*`, SessionStart hook; `claude mcp add -s user` |
 | Codex | root thread id (lock files held by the process; classified by state DB `thread_source`, rollout header, or single-lock rule) | `codex` processes on a tty | `codex queue --thread <id>` | rollout `response_item` user message | `codex mcp add`; `[mcp_servers.modelbus.tools.<t>] approval_mode = "approve"` |
-| Aside | session id + account from `~/.aside/u/<N>/state.db` | daemon health + state DB, last 7 days | `aside --account u<N> session queue <id>` | `~/.aside/u/<N>/sessions/<date>_<id>/messages.jsonl` user entry | each account's settings: `mcp.servers.modelbus` (env names the account) + cached tool inventory |
-| registered | token | contact clock (or pid) | run its `--deliver` command with text on stdin, else waiting | command exit 0 | none |
+| Aside | session id from `~/.aside/u/<N>/state.db` (account remembered in memory) | daemon health + state DB, last 7 days | `aside --account u<N> session queue <id>` | `~/.aside/u/<N>/sessions/<date>_<id>/messages.jsonl` user entry | each account's settings: `mcp.servers.modelbus` (env names the account) + cached tool inventory |
+| registered | the token | none: live by contact | none: `waiting`, the process pulls | on pull | none |
 
 Claude Code specifics: the token is consulted only if the posting process has
-exited, hence the helper. Sessions started before `init` have no token until they
-run `attach` or make a tool call through the shim; their deliveries are
-`delivered-unattested` and a bypass-mode session holds them behind a dialog.
+exited, hence the helper. Sessions started before `init`, or whose token the daemon
+has forgotten after a restart, get `delivered-unattested` until they run `attach`
+or make a tool call through the shim; a bypass-mode session holds those behind a
+dialog.
 
 Codex specifics: a thread with no turns yet cannot be queued to ("no rollout
 found"), shown as not reachable. Codex reads config at launch; sessions started
@@ -158,19 +170,22 @@ account, so messages from Aside are attributed to the account (`aside-1`), not t
 session. Aside declines browser actions "requested solely by another agent" on its
 own policy.
 
-## 9. Protocol and clients
+## 10. Protocol and clients
 
 RPC: POST `{ method, params, identity? }` to `~/.modelbus/daemon.sock` path `/rpc`.
-Methods: `ping`, `bind`, `attach`, `register`, `send`, `pull`, `who`, `log`. See
-`protocol.md`.
+Methods: `ping`, `bind`, `attach`, `register`, `send`, `pull`, `who`, `log`. The
+method table in `daemon.ts` is the protocol; `client.ts` derives its types from it,
+so `rpc("who", { filter })` is checked at compile time. See `protocol.md`.
 
 Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `init`, `mcp`, `serve`,
 plus adapter verbs `hook`, `attach`, `post`); the MCP shim (`send`, `who`, and
 `sync` only with `--with-sync`; one-sentence instructions); any program via the
-socket. `MODELBUS_HOME` points clients at another instance. The daemon is started
-on demand by any client.
+socket. `MODELBUS_HOME` points clients at another instance. The CLI starts the
+daemon on demand for every command that needs it.
 
-## 10. Guards (`core/guards.ts`)
+## 11. Limits (`core/guards.ts`)
 
-Dedupe window 60 s, 10 sends per sender per minute, 64 KB body, 600 s max wait,
-50 items per pull. No wake budget, no hop counter, no contact policy in v0.
+Dedupe window 60 s, 10 sends per sender per minute, 64 KB body, 240 s max wait
+(below Bun's 255 s socket idle timeout), 50 items per pull. Timings local to one
+module (reconcile interval, socket timeouts, watcher polling) are named constants
+at the top of that module. No wake budget, no hop counter, no contact policy in v0.

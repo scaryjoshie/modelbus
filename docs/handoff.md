@@ -1,4 +1,4 @@
-# Handoff (written 2026-09-08 by the Claude session that built the POC)
+# Handoff (written 2026-09-08, updated 2026-09-09, by the Claude session that built the POC)
 
 Read `architecture.md` for how the code works. This file is what you need to know
 that isn't in the code.
@@ -10,6 +10,9 @@ that isn't in the code.
   modelbus `send` tool; a shell script joined via `register` and round-tripped too.
   Every check (`bun run check`) passes. Everything is pushed to
   `scaryjoshie/modelbus`.
+- 2026-09-09: identity/schema cleanup (see architecture.md §3–§5), typed RPC client,
+  named constants, max wait lowered to 240 s to fit under Bun's socket idle timeout.
+  Database was wiped and the daemon restarted; nothing of value was in it.
 - Joshua's machine is fully wired: `init --write` has been run for all three hosts.
   The Aside CLI is installed at `~/.local/bin/aside`. The daemon runs from source
   (`bun run src/cli.ts serve`) and clients auto-start it. A daemon restart forgets
@@ -26,20 +29,23 @@ that isn't in the code.
 - **Models never poll.** The bus delivers through each host's own door. `sync`
   exists only as explicit catch-up. A heartbeat routine was proposed for Aside and
   withdrawn; the Aside CLI is the right door and he approved installing it.
-- **Object model.** Uniform `Agent` (our id/name/host/state); host identity sealed
-  in the adapter's handle; core never reads it. He asked for this explicitly after
-  spotting "session id" as a leaky abstraction.
-- **Registration for any process** (done) so integrations don't all need detection
-  code. He sees detection adapters as living *on top of* the core and possibly
-  registering through the same API as apps.
+- **Object model.** An agent is our id + name + (host, hostKey). Core compares keys
+  and hands them back to the adapter; it never interprets them. The 2026-09-09
+  cleanup removed the sealed "handle", the `handles` and `presence` tables, and the
+  durability/evidence/attestation metadata: they weren't read by anything. Don't
+  reintroduce stored fields nothing consumes.
+- **Discovered and registered agents are the same thing to core.** Someone holds
+  each agent's line: an adapter for a discovered host, the process itself (via an
+  open `pull`) for a registered one. Core never runs a command on an agent's behalf;
+  the `--deliver <command>` option was removed for that reason.
 - **Docs are drafts.** `design-notes.md` is exploration; OPEN items are undecided.
   Ask before resolving one. He rewound the conversation once when a branch went
   further than he wanted.
 - **Code quality matters to him** and he's learning TypeScript; he asked whether the
   code is idiomatic. Conventions are in CLAUDE.md. Keep files small, results typed,
   no host names outside adapters.
-- **He last said**: the strict separation of object types may be costing convenience
-  and simplicity, and he wants to revisit that. That conversation is next.
+- **Groups and read receipts are intended.** Conversations, participants, and
+  per-recipient delivery rows stayed for that reason; `receivedAt` is the receipt.
 
 ## Lessons that cost real time
 
@@ -75,10 +81,9 @@ he may close them.
 
 ## Candidate next steps (his call)
 
-1. Revisit the object-type separation for convenience (his open concern).
-2. Aside session identity via tool-call metadata; then `send --wait` matches Aside
+1. Aside session identity via tool-call metadata; then `send --wait` matches Aside
    replies to the session they came from.
-3. Tokens surviving a daemon restart (owner-only file keyed by session id).
-4. Package split (core / adapters / client / cli), compiled daemon, launchd.
-5. Webhook delivery option for registered apps (`--deliver-url`).
-6. Groups, UI, federation: designed in `design-notes.md`, not built.
+2. Tokens surviving a daemon restart (owner-only file keyed by session id).
+3. Package split (core / adapters / client / cli), compiled daemon, launchd.
+4. A `rename` verb (user-pinned names; `nameSource` was dropped with it).
+5. Groups, UI, federation: designed in `design-notes.md`, not built.

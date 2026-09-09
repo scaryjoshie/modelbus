@@ -6,19 +6,22 @@ joins by registering. No adapter, no detection, no account.
 ## 1. Register
 
 ```
-modelbus register --name <name> [--host <label>] [--pid <n>] [--deliver <command>]
+modelbus register --name <name>
 ```
 
 Prints a token on stdout. The token is the process's identity from now on; keep it
-in memory or in `MODELBUS_TOKEN`. `--host` is a free-text label shown in `who`.
+in memory or in `MODELBUS_TOKEN`.
 
-## 2. Receive, one of two ways
+## 2. Receive
 
-- **Push:** pass `--deliver <command>`. Per message the daemon runs the command with
-  the text on stdin: an attribution line `[modelbus #<id>] from <name>`, a blank
-  line, the body. Exit 0 counts as received.
-- **Pull:** `modelbus sync --token <t> [--wait <seconds>]`. One line per message,
-  `sender: text`, or the word `nothing`. `--wait` long-polls.
+```
+modelbus sync --token <t> [--wait <seconds>]
+```
+
+One line per message, `sender: text`, or the word `nothing`. With `--wait` the call
+blocks until a message arrives (up to 240 s); a process that keeps one such call
+open receives as it happens. There is no push into a registered process: its open
+call is its line.
 
 ## 3. Send
 
@@ -30,9 +33,8 @@ modelbus send --token <t> --to <agent name> "<text>" [--wait <seconds>]
 
 ## 4. Presence
 
-A registrant is live while it keeps calling in, or while `--pid` is alive if given.
-After ten minutes of silence without a pid it shows as gone; the same token brings
-it back with its name and history.
+A registrant is live while it keeps calling in. After ten minutes of silence it
+drops off `who`; the same token brings it back with its name and history.
 
 ## The wire protocol
 
@@ -43,13 +45,14 @@ The CLI is a thin client. POST JSON to the unix socket `~/.modelbus/daemon.sock`
 { "method": "...", "params": { ... }, "identity": { ... } }
 ```
 
-Identity is one of `{kind:"token", token}`, `{kind:"self", host, key, name, evidence?}`
-(a session naming itself; `key` is host-adapter defined), or `{kind:"cli", as}` (test only).
+Identity is `{kind:"token", token}` or `{kind:"self", host, key, name}` (a session
+naming itself; `key` is host-adapter defined). The CLI's `--as <name>` is a `self`
+identity on the pseudo-host `cli`, for testing.
 
 | method | params | identity | returns |
 |---|---|---|---|
 | `ping` | | no | `{ok, pid}` |
-| `register` | `{name, host?, pid?, deliver?}` | no | `{agent, token}` |
+| `register` | `{name}` | no | `{agent, token}` |
 | `bind` | | yes | `{agent}` |
 | `attach` | adapter-specific runtime info | yes | `{agent, attached}` |
 | `send` | `{to, body, wait?}` | yes | `{message, to, delivery: {outcome, detail?}, reply?}` |
@@ -60,6 +63,9 @@ Identity is one of `{kind:"token", token}`, `{kind:"self", host, key, name, evid
 `delivery.outcome` is `delivered`, `delivered-unattested`, `waiting`,
 `returned-to-waiter`, `unavailable`, or `error`. Errors come back as HTTP 4xx/5xx
 with `{error}`; 422 means the request was refused by a guard or a name lookup.
+
+From TypeScript, `src/client.ts` exports `rpc(method, params, identity?)` typed
+against the daemon's method table.
 
 ## As an MCP server
 

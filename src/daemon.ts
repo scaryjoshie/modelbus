@@ -1,10 +1,11 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { allAdapters } from "./adapters/index.ts";
-import { RegisteredAdapter } from "./adapters/registered.ts";
 import type { HostAdapter } from "./core/adapter.ts";
 import { Api, ApiError } from "./core/api.ts";
+import { GUARDS } from "./core/guards.ts";
 import { dbPath, socketPath } from "./core/paths.ts";
 import { Store } from "./core/store.ts";
 import { Tracker } from "./tracker.ts";
@@ -12,26 +13,29 @@ import { Tracker } from "./tracker.ts";
 /**
  * The daemon is the composition root: one Store, one Api, one Tracker over the
  * configured adapters, one HTTP-over-unix-socket endpoint. Clients POST /rpc with
- * { method, params, identity }. The method table below is the protocol.
+ * { method, params, identity }. The method table below is the protocol; the client
+ * derives its types from it.
  *
  * Identity on the wire:
- *   - { kind: "cli", as }                         test-only override
- *   - { kind: "self", host, key, name, evidence } a session identifying itself
- *   - { kind: "token", token }                    a self-registered process
+ *   - { kind: "self", host, key, name }  a session identifying itself
+ *   - { kind: "token", token }           a self-registered process
  */
 
-const Identity = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("cli"), as: z.string().min(1) }),
+/** Bun's maximum. Must exceed the longest long-poll. */
+const IDLE_TIMEOUT_SECONDS = 255;
+/** The host of processes that joined via `register`; nobody observes them, they call in. */
+const REGISTERED_HOST = "registered";
+
+export const Identity = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("self"),
     host: z.string().min(1),
     key: z.string().min(1),
     name: z.string().min(1),
-    evidence: z.string().optional(),
   }),
   z.object({ kind: z.literal("token"), token: z.string().min(8) }),
 ]);
-type Identity = z.infer<typeof Identity>;
+export type Identity = z.infer<typeof Identity>;
 
 const Envelope = z.object({
   method: z.string(),
@@ -39,117 +43,102 @@ const Envelope = z.object({
   identity: Identity.optional(),
 });
 
-interface Method<P> {
-  params: z.ZodType<P>;
-  /** Whether the caller must identify itself. */
+/** A method anyone may call. */
+const open = <S extends z.ZodType, R>(m: {
+  params: S;
+  handler(params: z.infer<S>): R | Promise<R>;
+}) => ({ ...m, identity: false as const });
+
+/** A method that runs as the identified caller. */
+const authed = <S extends z.ZodType, R>(m: {
+  params: S;
+  handler(params: z.infer<S>, agentId: string): R | Promise<R>;
+}) => ({ ...m, identity: true as const });
+
+interface AnyMethod {
+  params: z.ZodType;
   identity: boolean;
-  handler(params: P, agentId: string | undefined): Promise<unknown> | unknown;
+  handler(params: unknown, agentId?: string): unknown;
 }
 
-const method = <P>(m: Method<P>) => m;
+function buildMethods(store: Store, api: Api, tracker: Tracker) {
+  return {
+    ping: open({ params: z.object({}), handler: () => ({ ok: true, pid: process.pid }) }),
+    bind: authed({
+      params: z.object({}),
+      handler: (_p, id) => ({ agent: store.agentById(id) as Agent }),
+    }),
+    attach: authed({
+      params: z.record(z.string(), z.unknown()),
+      handler: (p, id) => {
+        const agent = store.agentById(id) as Agent;
+        return { agent, attached: tracker.attach(agent, p) };
+      },
+    }),
+    register: open({
+      params: z.object({ name: z.string().min(1) }),
+      handler: (p) => {
+        const token = randomBytes(16).toString("base64url");
+        const agent = store.bind({ host: REGISTERED_HOST, key: token, name: p.name });
+        tracker.touch(agent.id);
+        return { agent, token };
+      },
+    }),
+    send: authed({
+      params: z.object({ to: z.string(), body: z.string(), wait: z.number().optional() }),
+      handler: async (p, id) => {
+        if (!store.agentByName(p.to)) await tracker.reconcile();
+        return api.send({ fromId: id, ...p });
+      },
+    }),
+    pull: authed({
+      params: z.object({
+        scope: z.string().optional(),
+        wait: z.number().optional(),
+        limit: z.number().optional(),
+      }),
+      handler: (p, id) => api.pull({ agentId: id, ...p }),
+    }),
+    who: open({
+      params: z.object({ filter: z.string().optional(), fresh: z.boolean().optional() }),
+      handler: async (p) => {
+        if (p.fresh) await tracker.reconcile();
+        return { agents: tracker.list(p.filter) };
+      },
+    }),
+    log: open({
+      params: z.object({ a: z.string().optional(), b: z.string().optional() }),
+      handler: (p) => ({ rows: api.log(p) }),
+    }),
+  };
+}
+
+type Agent = NonNullable<ReturnType<Store["agentById"]>>;
+/** The protocol, as a type the client can check calls against. */
+export type Methods = ReturnType<typeof buildMethods>;
 
 export function createDaemon(
   opts: { store?: Store; unix?: string; adapters?: HostAdapter[]; track?: boolean } = {},
 ) {
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store);
-  const registered = new RegisteredAdapter(store);
-  const tracker = new Tracker(store, opts.adapters ?? allAdapters(store));
+  const tracker = new Tracker(store, opts.adapters ?? allAdapters());
   api.setDeliver((agent, text, marker, onReceipt) =>
     tracker.deliver(agent, text, marker, onReceipt),
   );
   if (opts.track !== false) tracker.start();
+  const methods: Record<string, AnyMethod> = buildMethods(store, api, tracker);
 
   function resolveIdentity(identity: Identity | undefined): string {
     if (!identity) throw new ApiError("identity required");
-    switch (identity.kind) {
-      case "cli":
-        return store.bind({
-          host: "cli",
-          key: identity.as,
-          handle: { as: identity.as },
-          durability: "permanent",
-          preferredName: identity.as,
-          evidence: "cli --as (test identity)",
-          attestation: "attested",
-        }).id;
-      case "token": {
-        const h = store.handleByKey("registered", identity.token);
-        if (!h) throw new ApiError("unknown token; register first");
-        registered.touch(identity.token);
-        store.touch(h.agentId);
-        return h.agentId;
-      }
-      case "self":
-        return tracker.identify({ ...identity, evidence: identity.evidence ?? "self-identified" })
-          .id;
+    if (identity.kind === "token") {
+      const agent = store.agentByHostKey(REGISTERED_HOST, identity.token);
+      if (!agent) throw new ApiError("unknown token; register first");
+      tracker.touch(agent.id);
+      return agent.id;
     }
+    return tracker.identify(identity).id;
   }
-
-  /** The protocol. Each entry validates its params and runs with the resolved caller. */
-  const methods = {
-    ping: method({
-      params: z.object({}),
-      identity: false,
-      handler: () => ({ ok: true, pid: process.pid }),
-    }),
-    bind: method({
-      params: z.object({}),
-      identity: true,
-      handler: (_p, id) => ({ agent: store.agentById(id as string) }),
-    }),
-    attach: method({
-      params: z.record(z.string(), z.unknown()),
-      identity: true,
-      handler: (p, id) => ({
-        agent: store.agentById(id as string),
-        attached: tracker.attach(id as string, p),
-      }),
-    }),
-    register: method({
-      params: z.object({
-        name: z.string().min(1),
-        host: z.string().optional(),
-        pid: z.number().int().optional(),
-        deliver: z.string().optional(),
-      }),
-      identity: false,
-      handler: (p) => {
-        const r = registered.register({ ...p, hostLabel: p.host });
-        return { agent: r.agent, token: r.token };
-      },
-    }),
-    send: method({
-      params: z.object({ to: z.string(), body: z.string(), wait: z.number().optional() }),
-      identity: true,
-      handler: async (p, id) => {
-        if (!store.agentByName(p.to)) await tracker.reconcile();
-        return api.send({ fromId: id as string, ...p });
-      },
-    }),
-    pull: method({
-      params: z.object({
-        scope: z.string().optional(),
-        wait: z.number().optional(),
-        limit: z.number().optional(),
-      }),
-      identity: true,
-      handler: (p, id) => api.pull({ agentId: id as string, ...p }),
-    }),
-    who: method({
-      params: z.object({ filter: z.string().optional(), fresh: z.boolean().optional() }),
-      identity: false,
-      handler: async (p) => {
-        if (p.fresh) await tracker.reconcile();
-        return { agents: tracker.list(p.filter) };
-      },
-    }),
-    log: method({
-      params: z.object({ a: z.string().optional(), b: z.string().optional() }),
-      identity: false,
-      handler: (p) => ({ rows: api.log(p) }),
-    }),
-  };
 
   async function handle(req: Request): Promise<Response> {
     if (req.method !== "POST" || new URL(req.url).pathname !== "/rpc") {
@@ -161,7 +150,7 @@ export function createDaemon(
     } catch (e) {
       return Response.json({ error: `bad request: ${String(e)}` }, { status: 400 });
     }
-    const m = (methods as unknown as Record<string, Method<unknown>>)[env.method];
+    const m = methods[env.method];
     if (!m) return Response.json({ error: `unknown method ${env.method}` }, { status: 404 });
     try {
       const params = m.params.parse(env.params);
@@ -176,11 +165,15 @@ export function createDaemon(
   const unix = opts.unix ?? socketPath();
   mkdirSync(dirname(unix), { recursive: true });
   if (existsSync(unix)) unlinkSync(unix);
-  // idleTimeout must exceed the longest long-poll; Bun's unix-socket option type
-  // omits it, so the options object is cast.
-  const server = Bun.serve({ unix, idleTimeout: 255, fetch: handle } as unknown as Parameters<
-    typeof Bun.serve
-  >[0]);
+  if (GUARDS.MAX_WAIT_SECONDS >= IDLE_TIMEOUT_SECONDS) {
+    throw new Error("MAX_WAIT_SECONDS must be below the socket idle timeout");
+  }
+  // Bun's unix-socket option type omits idleTimeout, so the options object is cast.
+  const server = Bun.serve({
+    unix,
+    idleTimeout: IDLE_TIMEOUT_SECONDS,
+    fetch: handle,
+  } as unknown as Parameters<typeof Bun.serve>[0]);
 
   return {
     api,

@@ -3,43 +3,33 @@ import type { HostAdapter, Observation } from "./core/adapter.ts";
 import { Store } from "./core/store.ts";
 import { Tracker } from "./tracker.ts";
 
-/** A fake host whose identity is an opaque token the tracker must never read. */
 class FakeHost implements HostAdapter {
   readonly host = "fake";
   live: Observation[] = [];
-  delivered: Array<{ handle: unknown; text: string }> = [];
-  constructor(private readonly secret = "sealed") {}
+  delivered: Array<{ key: string; text: string }> = [];
   async observe() {
     return this.live;
   }
-  handleFromKey(key: string) {
-    return { [this.secret]: key };
-  }
-  async deliver(handle: unknown, text: string, _marker: string, onReceipt: () => void) {
-    this.delivered.push({ handle, text });
+  async deliver(key: string, text: string, _marker: string, onReceipt: () => void) {
+    this.delivered.push({ key, text });
     onReceipt();
     return { outcome: "delivered" as const };
   }
 }
 
 function obs(key: string, name: string, extra: Partial<Observation> = {}): Observation {
-  return {
-    handle: { opaque: key, nested: { thing: true } },
-    key,
-    name,
-    durability: "session",
-    relationship: "top-level",
-    evidence: "fake",
-    reachable: true,
-    ...extra,
-  };
+  return { key, name, relationship: "top-level", reachable: true, ...extra };
+}
+
+function setup() {
+  const store = new Store(":memory:");
+  const host = new FakeHost();
+  return { store, host, t: new Tracker(store, [host]) };
 }
 
 describe("tracker", () => {
   test("observations become agents; the same key stays the same agent across passes", async () => {
-    const store = new Store(":memory:");
-    const host = new FakeHost();
-    const t = new Tracker(store, [host]);
+    const { host, t } = setup();
     host.live = [obs("k1", "one"), obs("k2", "two")];
     await t.reconcile();
     const first = t.list();
@@ -49,9 +39,8 @@ describe("tracker", () => {
     host.live = [obs("k1", "one renamed by host")];
     await t.reconcile();
     const second = t.list();
-    expect(second.map((e) => e.name)).toEqual(["one renamed by host"]); // follows the host until pinned
+    expect(second.map((e) => e.name)).toEqual(["one renamed by host"]); // follows the host
     expect(second[0]?.id).toBe(idOne); // but the id is ours and never changes
-    expect(t.list(undefined, ["gone"]).map((e) => e.name)).toEqual(["two"]);
 
     host.live = [obs("k1", "one"), obs("k2", "two")];
     await t.reconcile();
@@ -60,35 +49,15 @@ describe("tracker", () => {
     );
   });
 
-  test("a user-pinned name is not overridden by the host", async () => {
-    const store = new Store(":memory:");
-    const host = new FakeHost();
-    const t = new Tracker(store, [host]);
-    host.live = [obs("k1", "one")];
-    await t.reconcile();
-    const id = t.list()[0]?.id ?? "";
-    expect(store.rename(id, "my-agent")).toBe("my-agent");
-    host.live = [obs("k1", "host changed it")];
-    await t.reconcile();
-    expect(t.list()[0]?.name).toBe("my-agent");
-  });
-
   test("subagents never become peers", async () => {
-    const store = new Store(":memory:");
-    const host = new FakeHost();
-    const t = new Tracker(store, [host]);
-    host.live = [
-      obs("root", "root"),
-      obs("child", "child", { relationship: "subagent", parentKey: "root" }),
-    ];
+    const { host, t } = setup();
+    host.live = [obs("root", "root"), obs("child", "child", { relationship: "subagent" })];
     await t.reconcile();
     expect(t.list().map((e) => e.name)).toEqual(["root"]);
   });
 
-  test("deliver hands the adapter its own sealed handle, unmodified", async () => {
-    const store = new Store(":memory:");
-    const host = new FakeHost();
-    const t = new Tracker(store, [host]);
+  test("deliver hands the adapter the key it observed", async () => {
+    const { store, host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
     const agent = store.agentByName("one");
@@ -99,27 +68,28 @@ describe("tracker", () => {
     });
     expect(result.outcome).toBe("delivered");
     expect(receipt).toBe(true);
-    expect(host.delivered[0]?.handle).toEqual({ opaque: "k1", nested: { thing: true } });
+    expect(host.delivered).toEqual([{ key: "k1", text: "hello" }]);
   });
 
-  test("identify attests an observed agent and rebuilds the handle via the adapter", async () => {
-    const store = new Store(":memory:");
-    const host = new FakeHost("secretField");
-    const t = new Tracker(store, [host]);
+  test("an agent nobody observes is live while it calls in", async () => {
+    const { t } = setup();
+    const a = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
+    expect(t.list().map((e) => `${e.name}:${e.note}`)).toEqual(["lonely:by sync"]);
+    const result = await t.deliver(a, "hi", "#m", () => undefined);
+    expect(result.outcome).toBe("waiting");
+  });
+
+  test("identify binds to the observed agent, not a new one", async () => {
+    const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
-    expect(store.handleOf(t.list()[0]?.id ?? "")?.attestation).toBe("observed");
-    const a = t.identify({ host: "fake", key: "k1", name: "one", evidence: "hook" });
-    expect(a.name).toBe("one");
-    const h = store.handleOf(a.id);
-    expect(h?.attestation).toBe("attested");
-    expect(JSON.parse(h?.handle ?? "{}")).toEqual({ secretField: "k1" });
+    const a = t.identify({ host: "fake", key: "k1", name: "one" });
+    expect(t.list()[0]?.id).toBe(a.id);
+    expect(t.list()).toHaveLength(1);
   });
 
-  test("a failing adapter does not mark its agents gone", async () => {
-    const store = new Store(":memory:");
-    const host = new FakeHost();
-    const t = new Tracker(store, [host]);
+  test("a failing adapter keeps its last presence", async () => {
+    const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
     host.observe = async () => {

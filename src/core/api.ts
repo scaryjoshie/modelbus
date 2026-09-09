@@ -65,8 +65,8 @@ export class Api {
     if (this.store.identicalRecently(conv.id, from.id, opts.body, GUARDS.DEDUPE_WINDOW_MS) > 0) {
       throw new ApiError("dropped: identical message sent within the last minute");
     }
-    if (this.store.sendsSince(from.id, 60_000) >= GUARDS.RATE_LIMIT_PER_MINUTE) {
-      throw new ApiError(`refused: over ${GUARDS.RATE_LIMIT_PER_MINUTE} sends per minute`);
+    if (this.store.sendsSince(from.id, GUARDS.RATE_WINDOW_MS) >= GUARDS.RATE_LIMIT) {
+      throw new ApiError(`refused: over ${GUARDS.RATE_LIMIT} sends per minute`);
     }
     const message = this.store.insertMessage(conv.id, from.id, opts.body);
     this.store.touch(from.id);
@@ -79,7 +79,7 @@ export class Api {
       : await this.deliver(to, this.render(message, from), `#${message.id}`, () =>
           this.store.markReceived([message.id], to.id),
         );
-    this.store.recordWake(message.id, to.id, to.host, delivery.outcome, delivery.detail);
+    this.store.recordDelivery(message.id, to.id, delivery.outcome, delivery.detail);
 
     const reply =
       opts.wait && opts.wait > 0

@@ -1,20 +1,26 @@
+import type { z } from "zod";
 import { socketPath } from "./core/paths.ts";
+import type { Identity, Methods } from "./daemon.ts";
 
-/** Minimal RPC client over the daemon's unix socket. */
+/**
+ * RPC client over the daemon's unix socket. Method names, params, and results are
+ * checked against the daemon's method table, so a typo or a wrong field fails to
+ * compile rather than at runtime.
+ */
 
-export type Identity =
-  | { kind: "cli"; as: string }
-  | { kind: "self"; host: string; key: string; name: string; evidence?: string }
-  | { kind: "token"; token: string };
+export type { Identity };
+export type MethodName = keyof Methods;
+export type Params<M extends MethodName> = z.input<Methods[M]["params"]>;
+export type Result<M extends MethodName> = Awaited<ReturnType<Methods[M]["handler"]>>;
 
 export class DaemonUnreachable extends Error {}
 
-export async function rpc<T = unknown>(
-  method: string,
-  params: Record<string, unknown> = {},
+export async function rpc<M extends MethodName>(
+  method: M,
+  params: Params<M>,
   identity?: Identity,
   unix: string = socketPath(),
-): Promise<T> {
+): Promise<Result<M>> {
   let res: Response;
   try {
     res = await fetch("http://modelbus/rpc", {
@@ -28,7 +34,7 @@ export async function rpc<T = unknown>(
       `cannot reach modelbus daemon at ${unix} (${e instanceof Error ? e.message : e}); start it with: modelbus serve`,
     );
   }
-  const data = (await res.json()) as { error?: string } & T;
+  const data = (await res.json()) as { error?: string } & Result<M>;
   if (!res.ok) throw new Error(data.error ?? `rpc ${method} failed (${res.status})`);
   return data;
 }

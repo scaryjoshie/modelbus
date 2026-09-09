@@ -2,11 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { rpc } from "./client.ts";
-import type { InboxItem } from "./core/store.ts";
+import { GUARDS } from "./core/guards.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
-import type { RosterEntry } from "./tracker.ts";
 
 /**
  * The stdio shim: an MCP server a host spawns per session. It asks the adapters who
@@ -23,7 +22,7 @@ const text = (t: string, isError = false) => ({
 export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   await ensureDaemon();
   const { identity, label, attach } = await whoAmI();
-  const me = (await rpc<{ agent: { name: string } }>("bind", {}, identity)).agent.name;
+  const me = (await rpc("bind", {}, identity)).agent.name;
   // Hand the daemon whatever our adapter says it needs to reach this session.
   if (attach) await rpc("attach", attach, identity).catch(() => undefined);
 
@@ -41,16 +40,18 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: {
         to: z.string().describe("agent name, as shown by who"),
         body: z.string(),
-        wait: z.number().int().min(0).max(600).optional().describe("seconds to wait for a reply"),
+        wait: z
+          .number()
+          .int()
+          .min(0)
+          .max(GUARDS.MAX_WAIT_SECONDS)
+          .optional()
+          .describe("seconds to wait for a reply"),
       },
     },
     async ({ to, body, wait }) => {
       try {
-        const r = await rpc<{
-          to: { name: string };
-          delivery: { outcome: string; detail?: string };
-          reply?: InboxItem;
-        }>("send", { to, body, wait }, identity);
+        const r = await rpc("send", { to, body, wait }, identity);
         const bad = r.delivery.outcome === "error" || r.delivery.outcome === "unavailable";
         let out = `sent to ${r.to.name}${bad ? ` (${r.delivery.outcome}: ${r.delivery.detail})` : ""}`;
         if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
@@ -68,7 +69,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
-      const r = await rpc<{ agents: RosterEntry[] }>("who", { filter });
+      const r = await rpc("who", { filter });
       const lines = r.agents
         .filter((a) => a.name !== me && (filter || a.reachable))
         .map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
@@ -83,15 +84,11 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
         description: "Read messages sent to you that have not been delivered yet.",
         inputSchema: {
           scope: z.string().optional(),
-          wait: z.number().int().min(0).max(600).optional(),
+          wait: z.number().int().min(0).max(GUARDS.MAX_WAIT_SECONDS).optional(),
         },
       },
       async ({ scope, wait }) => {
-        const r = await rpc<{ items: InboxItem[]; more: number; moreElsewhere: number }>(
-          "pull",
-          { scope, wait },
-          identity,
-        );
+        const r = await rpc("pull", { scope, wait }, identity);
         const lines = r.items.map(renderItem);
         if (r.more) lines.push(`[${r.more} more; call sync again]`);
         if (r.moreElsewhere) lines.push(`[${r.moreElsewhere} unread in other DMs]`);

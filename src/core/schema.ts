@@ -9,59 +9,28 @@ import {
 
 /**
  * The bus schema, defined once. Drizzle derives row types and migrations from it.
- * See docs/poc-spec.md section 5.
+ *
+ * Only what must survive a daemon restart lives here: who the agents are and what
+ * was said. Presence (who is live and reachable right now) is re-observed every few
+ * seconds and kept in the tracker's memory.
  */
 
-/** Agents are ours: id, name, host kind, state. Nothing host-shaped lives here. */
-export const agents = sqliteTable("agents", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  host: text("host").notNull(),
-  createdAt: integer("created_at").notNull(),
-  lastSeen: integer("last_seen").notNull(),
-  /** live | gone | unknown */
-  state: text("state").notNull().default("live"),
-  /** host: follows the host's own name; user: pinned by the user */
-  nameSource: text("name_source").notNull().default("host"),
-});
-
-/** The sealed host identity behind an agent. The core never reads `handle`. */
-export const handles = sqliteTable(
-  "handles",
+/**
+ * An agent: our permanent id and display name, plus the host that holds its line
+ * and the host's own key for it. Same (host, hostKey) is the same agent forever.
+ * The key is opaque to the core; only the host's adapter knows what it means.
+ */
+export const agents = sqliteTable(
+  "agents",
   {
-    agentId: text("agent_id")
-      .primaryKey()
-      .references(() => agents.id),
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
     host: text("host").notNull(),
-    key: text("key").notNull(),
-    handle: text("handle").notNull(),
-    /** process | session | permanent */
-    durability: text("durability").notNull(),
-    evidence: text("evidence").notNull(),
-    /** observed | attested */
-    attestation: text("attestation").notNull().default("observed"),
-    boundAt: integer("bound_at").notNull(),
+    hostKey: text("host_key").notNull(),
+    lastSeen: integer("last_seen").notNull(),
   },
-  (t) => [uniqueIndex("handles_key").on(t.host, t.key)],
+  (t) => [uniqueIndex("agents_host_key").on(t.host, t.hostKey)],
 );
-
-/** What the tracker last observed about an agent. */
-export const presence = sqliteTable("presence", {
-  agentId: text("agent_id")
-    .primaryKey()
-    .references(() => agents.id),
-  pid: integer("pid"),
-  cwd: text("cwd"),
-  status: text("status"),
-  title: text("title"),
-  relationship: text("relationship").notNull().default("unknown"),
-  parentKey: text("parent_key"),
-  reachable: integer("reachable", { mode: "boolean" }).notNull().default(false),
-  note: text("note"),
-  startedAt: integer("started_at"),
-  firstSeen: integer("first_seen").notNull(),
-  lastSeen: integer("last_seen").notNull(),
-});
 
 export const conversations = sqliteTable("conversations", {
   id: text("id").primaryKey(),
@@ -88,6 +57,7 @@ export const messages = sqliteTable(
   "messages",
   {
     seq: integer("seq").primaryKey({ autoIncrement: true }),
+    /** Short random id; appears in the delivered text as the receipt marker. */
     id: text("id").notNull().unique(),
     conversationId: text("conversation_id")
       .notNull()
@@ -101,7 +71,7 @@ export const messages = sqliteTable(
   (t) => [index("messages_conv_seq").on(t.conversationId, t.seq)],
 );
 
-/** One row per (message, recipient). `receivedAt` is the inbox state. */
+/** One row per (message, recipient). `receivedAt` is the read receipt. */
 export const deliveries = sqliteTable(
   "deliveries",
   {
@@ -111,11 +81,9 @@ export const deliveries = sqliteTable(
     toAgentId: text("to_agent_id")
       .notNull()
       .references(() => agents.id),
-    wakeProvider: text("wake_provider"),
-    wakeAttemptedAt: integer("wake_attempted_at"),
-    /** DeliveryOutcome */
-    wakeResult: text("wake_result"),
-    wakeDetail: text("wake_detail"),
+    /** DeliveryOutcome, once the push was attempted */
+    outcome: text("outcome"),
+    detail: text("detail"),
     receivedAt: integer("received_at"),
   },
   (t) => [
@@ -125,8 +93,6 @@ export const deliveries = sqliteTable(
 );
 
 export type AgentRow = typeof agents.$inferSelect;
-export type HandleRow = typeof handles.$inferSelect;
-export type PresenceRow = typeof presence.$inferSelect;
 export type ConversationRow = typeof conversations.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type DeliveryRow = typeof deliveries.$inferSelect;

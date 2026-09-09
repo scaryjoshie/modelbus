@@ -26,6 +26,9 @@ import { fileOffset, watchTranscript } from "../util/watch.ts";
 const usersDir = () => join(homedir(), ".aside", "u");
 const asideCli = () => join(homedir(), ".local", "bin", "aside");
 const HEALTH = "http://127.0.0.1:21420/health";
+const HEALTH_TIMEOUT_MS = 1500;
+/** Sessions untouched for longer than this are not listed. */
+const RECENT_MS = 7 * 24 * 3600 * 1000;
 
 interface Row {
   id: string;
@@ -73,37 +76,31 @@ function transcriptPath(account: number, sessionId: string): string | undefined 
 
 async function daemonUp(): Promise<boolean> {
   try {
-    return (await fetch(HEALTH, { signal: AbortSignal.timeout(1500) })).ok;
+    return (await fetch(HEALTH, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) })).ok;
   } catch {
     return false;
   }
 }
 
-interface Handle {
-  sessionId: string;
-  account: number;
-}
-
 export class AsideAdapter implements HostAdapter {
   readonly host = "aside";
+  /** Which account each observed session belongs to; the CLI needs it. */
+  private readonly accountOf = new Map<string, number>();
 
   async observe(): Promise<Observation[]> {
     if (!(await daemonUp())) return [];
     const cli = existsSync(asideCli());
-    const recent = Date.now() / 1000 - 7 * 24 * 3600;
+    const recent = (Date.now() - RECENT_MS) / 1000;
     const out: Observation[] = [];
     for (const account of accounts()) {
       for (const s of sessionsOf(account)) {
         if (s.updated_at < recent) continue;
+        this.accountOf.set(s.id, account);
         const subagent = Boolean(s.parent_id) || (s.trigger ?? "").includes('"subagent"');
         out.push({
-          handle: { sessionId: s.id, account } satisfies Handle,
           key: s.id,
           name: s.title || `aside-${s.id}`,
-          durability: "permanent",
           relationship: subagent ? "subagent" : "top-level",
-          parentKey: s.parent_id ?? undefined,
-          evidence: `aside u/${account} state.db`,
           reachable: cli,
           note: cli ? undefined : "Aside CLI not installed (~/.local/bin/aside)",
           status: s.status,
@@ -115,25 +112,20 @@ export class AsideAdapter implements HostAdapter {
     return out;
   }
 
-  handleFromKey(key: string): Handle {
-    return { sessionId: key, account: -1 };
-  }
-
   async deliver(
-    handle: unknown,
+    sessionId: string,
     text: string,
     marker: string,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
-    const h = handle as Handle;
     const account =
-      h.account >= 0 ? h.account : accounts().find((a) => transcriptPath(a, h.sessionId));
+      this.accountOf.get(sessionId) ?? accounts().find((a) => transcriptPath(a, sessionId));
     if (account === undefined) return unavailable("account for session not found");
     if (!existsSync(asideCli())) return unavailable("aside cli not installed");
-    const path = transcriptPath(account, h.sessionId);
+    const path = transcriptPath(account, sessionId);
     const fromOffset = path ? fileOffset(path) : 0;
     const proc = Bun.spawn(
-      [asideCli(), "--account", `u${account}`, "session", "queue", h.sessionId, text],
+      [asideCli(), "--account", `u${account}`, "session", "queue", sessionId, text],
       { stdout: "pipe", stderr: "pipe" },
     );
     if ((await proc.exited) !== 0) {

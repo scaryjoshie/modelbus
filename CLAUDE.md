@@ -17,7 +17,7 @@ Core is what would exist with zero known hosts. `scripts/check-layers.ts` enforc
 |---|---|---|
 | core | `src/core/*` (store, api, guards, adapter interface, schema, delivery, paths) | core only |
 | helpers | `src/util/*` (process table, transcript watcher) | util only |
-| adapters | `src/adapters/*`, one file per host, plus self-registration | core, util |
+| adapters | `src/adapters/*`, one file per host | core, util |
 | clients | `src/cli.ts`, `src/mcp.ts`, `src/identity.ts`, `src/client.ts`, `src/ensure.ts` | anything |
 | composition root | `src/daemon.ts`, `src/tracker.ts` | anything |
 
@@ -36,7 +36,12 @@ and Effective TypeScript. Concretely, in this repo:
 - No `any`, no non-null assertions, no dynamic `import()` to dodge cycles.
 - Small files with one responsibility. Classes only for things that hold state.
 - The store is the only module that touches SQL. Schema lives in `src/core/schema.ts`;
-  change it, then `bun run migrate:generate`, and commit the migration.
+  change it, then `bun run migrate:generate`, and commit the migration. Store only
+  what must survive a restart; presence is in memory. Don't add columns nothing reads.
+- Protocol limits live in `src/core/guards.ts`; a timing local to one module is a
+  named constant at the top of that module, with its unit in the name.
+- Core never runs a command on an agent's behalf. Adapters talk to their hosts'
+  own doors; a registered process holds its own line by calling `pull`.
 - Tool surface for agents stays tiny; context cost matters more than features.
 - Nothing may move the mouse, click, steal focus, or raise a window on the user's screen.
 - Models never poll. The bus delivers; `sync` exists only as an explicit catch-up.

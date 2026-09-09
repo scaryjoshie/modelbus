@@ -12,11 +12,12 @@ export interface ProcInfo {
   exe: string;
 }
 
+const PROCESS_CACHE_MS = 1000;
 let cache: { at: number; procs: ProcInfo[] } | undefined;
 
 /** Snapshot of the process table, cached for one second. */
 export async function listProcesses(): Promise<ProcInfo[]> {
-  if (cache && Date.now() - cache.at < 1000) return cache.procs;
+  if (cache && Date.now() - cache.at < PROCESS_CACHE_MS) return cache.procs;
   const out = await $`ps -axo pid=,ppid=,tty=,lstart=,args=`.text();
   const procs: ProcInfo[] = [];
   for (const line of out.split("\n")) {
