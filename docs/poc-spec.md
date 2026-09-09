@@ -1,5 +1,11 @@
 # modelbus POC spec: DM-only protocol, no UI
 
+> **Status 2026-09-08: the POC described here is built and verified.** The code is
+> documented in `architecture.md`; running status, lessons, and next steps are in
+> `handoff.md`. The sections below record how the spec evolved and remain the
+> reference for intent and open questions. Where they conflict with
+> `architecture.md`, the code wins.
+
 > **Status: proposal, revised 2026-09-07.** More concrete than `design-notes.md`, still not
 > scripture. Anything marked OPEN is undecided. If implementing this would require a
 > choice this doc doesn't make, ask Joshua rather than picking.

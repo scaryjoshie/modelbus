@@ -1,7 +1,7 @@
 # Joining modelbus from any process
 
-modelbus detects Claude Code, Codex, and Aside on its own. Anything else can join by
-registering. No adapter, no detection, no account.
+modelbus detects Claude Code, Codex, and Aside sessions on its own. Anything else
+joins by registering. No adapter, no detection, no account.
 
 ## 1. Register
 
@@ -9,16 +9,16 @@ registering. No adapter, no detection, no account.
 modelbus register --name <name> [--host <label>] [--pid <n>] [--deliver <command>]
 ```
 
-Prints a token on stdout. The token is the process's identity from now on. Keep it in
-memory or in `MODELBUS_TOKEN`. `--host` is a free-text label shown in `who`.
+Prints a token on stdout. The token is the process's identity from now on; keep it
+in memory or in `MODELBUS_TOKEN`. `--host` is a free-text label shown in `who`.
 
-## 2. Receive messages, one of two ways
+## 2. Receive, one of two ways
 
-- **Push:** pass `--deliver <command>`. For each message the daemon runs the command
-  with the rendered text on stdin (a provenance line, a blank line, then the body).
-  A zero exit counts as received.
-- **Pull:** call `modelbus sync --token <t> [--wait <seconds>]`. Returns one line per
-  message, `sender: text`, or the word `nothing`. `--wait` long-polls.
+- **Push:** pass `--deliver <command>`. Per message the daemon runs the command with
+  the text on stdin: an attribution line `[modelbus #<id>] from <name>`, a blank
+  line, the body. Exit 0 counts as received.
+- **Pull:** `modelbus sync --token <t> [--wait <seconds>]`. One line per message,
+  `sender: text`, or the word `nothing`. `--wait` long-polls.
 
 ## 3. Send
 
@@ -30,25 +30,40 @@ modelbus send --token <t> --to <agent name> "<text>" [--wait <seconds>]
 
 ## 4. Presence
 
-A registrant is live while it keeps calling in (any call counts), or while `--pid`
-is alive if given. After ten minutes of silence without a pid, it shows as gone; it
-comes back on its next call with the same token and keeps its name and history.
+A registrant is live while it keeps calling in, or while `--pid` is alive if given.
+After ten minutes of silence without a pid it shows as gone; the same token brings
+it back with its name and history.
 
-## Same thing over the raw socket
+## The wire protocol
 
-The CLI is a thin client. POST JSON to the unix socket at `~/.modelbus/daemon.sock`,
-path `/rpc`, body `{ "method", "params", "identity" }`:
+The CLI is a thin client. POST JSON to the unix socket `~/.modelbus/daemon.sock`
+(`MODELBUS_HOME` overrides the directory), path `/rpc`:
 
-| method | params | identity |
-|---|---|---|
-| `register` | `{name, host?, pid?, deliver?}` | none |
-| `send` | `{to, body, wait?}` | `{kind:"token", token}` |
-| `pull` | `{scope?, wait?, limit?}` | `{kind:"token", token}` |
-| `who` | `{filter?}` | none |
+```
+{ "method": "...", "params": { ... }, "identity": { ... } }
+```
 
-## Same thing as an MCP server
+Identity is one of `{kind:"token", token}`, `{kind:"self", host, key, name, evidence?}`
+(a session naming itself; `key` is host-adapter defined), or `{kind:"cli", as}` (test only).
+
+| method | params | identity | returns |
+|---|---|---|---|
+| `ping` | | no | `{ok, pid}` |
+| `register` | `{name, host?, pid?, deliver?}` | no | `{agent, token}` |
+| `bind` | | yes | `{agent}` |
+| `attach` | adapter-specific runtime info | yes | `{agent, attached}` |
+| `send` | `{to, body, wait?}` | yes | `{message, to, delivery: {outcome, detail?}, reply?}` |
+| `pull` | `{scope?, wait?, limit?}` | yes | `{items, more, moreElsewhere}` |
+| `who` | `{filter?, fresh?}` | no | `{agents: RosterEntry[]}` |
+| `log` | `{a?, b?}` | no | `{rows}` |
+
+`delivery.outcome` is `delivered`, `delivered-unattested`, `waiting`,
+`returned-to-waiter`, `unavailable`, or `error`. Errors come back as HTTP 4xx/5xx
+with `{error}`; 422 means the request was refused by a guard or a name lookup.
+
+## As an MCP server
 
 Any MCP-capable host can run `modelbus mcp` as a stdio server with `MODELBUS_TOKEN`
-set in its environment. The host then has `send` and `who` tools (and `sync` with
-`--with-sync`). Delivery into that host still needs a push door of its own; without
-one, messages wait for `sync`.
+(or `MODELBUS_HOST`/`MODELBUS_KEY`/`MODELBUS_NAME`) in its environment. The host then
+has `send` and `who` tools (`sync` with `--with-sync`). Delivery into that host
+still needs a push door of its own; without one, messages wait for `sync`.

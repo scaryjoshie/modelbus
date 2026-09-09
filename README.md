@@ -33,6 +33,8 @@ Layout: `src/core` (store, api, guards, adapter interface), `src/daemon.ts` and
 `src/cli.ts` and `src/mcp.ts` (clients).
 
 Docs:
+- `docs/architecture.md` — how the code works: data model, identity, delivery, hosts.
+- `docs/handoff.md` — current status, lessons learned, next-step candidates.
 - `docs/protocol.md` — how any process joins the bus (register, send, receive).
 - `docs/poc-spec.md` — the POC spec with milestones logged. A proposal, not a decision.
 - `docs/design-notes.md` — the wider exploration; explicitly drafts, not decisions.

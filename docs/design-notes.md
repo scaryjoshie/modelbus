@@ -1,5 +1,11 @@
 # modelbus design notes
 
+> **2026-09-08:** the POC exists. See `architecture.md` for what was built and
+> `handoff.md` for status. This file remains the exploration record and the list
+> of OPEN questions; several of its later sections were superseded during the build
+> (the hierarchy, thread ids, the wake budget, contact policy, and the provenance
+> header were all dropped or withdrawn).
+
 > **STATUS: EXPLORATORY DRAFT. NOTHING IN THIS FILE IS A DECISION.**
 >
 > These are ideas from design conversations between Joshua and Claude, September 2026.
