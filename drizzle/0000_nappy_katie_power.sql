@@ -19,7 +19,7 @@ CREATE UNIQUE INDEX `conversations_key_unique` ON `conversations` (`key`);--> st
 CREATE TABLE `deliveries` (
 	`message_id` text NOT NULL,
 	`to_agent_id` text NOT NULL,
-	`outcome` text,
+	`status` text DEFAULT 'queued' NOT NULL,
 	`detail` text,
 	`received_at` integer,
 	PRIMARY KEY(`message_id`, `to_agent_id`),

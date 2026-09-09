@@ -71,7 +71,7 @@ export const messages = sqliteTable(
   (t) => [index("messages_conv_seq").on(t.conversationId, t.seq)],
 );
 
-/** One row per (message, recipient). `receivedAt` is the read receipt. */
+/** One row per (message, recipient): its DeliveryStatus, and when it was received. */
 export const deliveries = sqliteTable(
   "deliveries",
   {
@@ -81,8 +81,9 @@ export const deliveries = sqliteTable(
     toAgentId: text("to_agent_id")
       .notNull()
       .references(() => agents.id),
-    /** DeliveryOutcome, once the push was attempted */
-    outcome: text("outcome"),
+    /** queued | received | failed */
+    status: text("status").notNull().default("queued"),
+    /** how it was queued, or why it failed */
     detail: text("detail"),
     receivedAt: integer("received_at"),
   },

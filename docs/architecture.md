@@ -19,13 +19,14 @@ src/
   core/        store.ts (all SQL), schema.ts (Drizzle tables), api.ts (send/pull),
                guards.ts, adapter.ts (host interface), delivery.ts (result type),
                paths.ts
-  util/        ps.ts (process table, ancestors), watch.ts (transcript watcher)
-  adapters/    claude-code.ts, codex.ts, aside.ts, index.ts
+  util/        ps.ts (process table, ancestors), watch.ts (transcript watcher, file events)
+  adapters/    one folder per host: index.ts (the class), the host's layout,
+               configure.ts (what init writes); index.ts lists them
   daemon.ts    composition root: store + api + tracker + adapters + RPC method table
   tracker.ts   reconcile loop, presence (in memory), delivery dispatch, roster
   client.ts    typed rpc() over the unix socket   identity.ts  "who am I" for shim/CLI
   ensure.ts    start the daemon on demand         render.ts    one-line message text
-  cli.ts       command table (bus verbs + adapter-contributed verbs)
+  cli.ts       command table
   mcp.ts       the stdio MCP shim hosts spawn per session
 scripts/check-layers.ts   fails the build on layering violations
 drizzle/                  generated migrations, applied when the store opens
@@ -60,7 +61,7 @@ said. Presence is re-observed every few seconds and lives in the tracker's memor
 | `conversations` | pair | `kind = dm`, `key = dm:<sorted ids>` so there is one DM per pair |
 | `participants` | conversation × agent | ready for groups |
 | `messages` | message | `seq` (global order), `id` (short random; the receipt marker), conversation, sender, body |
-| `deliveries` | message × recipient | `outcome` (DeliveryOutcome), `detail`, `receivedAt` (null = unread; this is the read receipt) |
+| `deliveries` | message × recipient | `status` (queued / received / failed), `detail` (how queued, or why failed), `receivedAt` |
 
 Inbox state is per delivery row, not a per-agent cursor, so a scoped read or a
 send-and-wait consumes one conversation without skipping others.
@@ -97,7 +98,6 @@ identifySelf?()                         -> SelfIdentity    am I inside one of yo
 deliver?(key, text, marker, onReceipt)  -> DeliveryResult
 attach?(key, info)                                         runtime secrets a session hands over
 configure?()                            -> ConfigurePlan   what `init` writes
-commands?()                             -> CLI verbs this host needs
 ```
 
 An `Observation` is the key, the preferred name, the relationship (`top-level` |
@@ -106,9 +106,12 @@ title). Only `top-level` observations become agents. Anything else an adapter ne
 at delivery time it re-derives from its host, or keeps in its own memory (Claude
 tokens, Aside's session-to-account map).
 
-`DeliveryResult.outcome` is one of `delivered`, `delivered-unattested`, `waiting`
-(no push path; recipient must pull), `returned-to-waiter` (given to a blocked
-send-and-wait instead of pushed), `unavailable`, `error`; `detail` says why or how.
+Delivery has three states per recipient, the same three every messaging system
+tracks. Sending is synchronous: `send` either stores the message or throws. After
+that each recipient's copy is `queued` (pushed into the host's queue, or waiting
+for a pull; `detail` says which), `received` (the session consumed it), or `failed`
+(the push failed; the recipient can still pull). An adapter's `DeliveryResult` is
+`queued` or `failed`; `received` comes later through `onReceipt`.
 
 ## 7. The tracker (`tracker.ts`)
 
@@ -129,12 +132,13 @@ routes to the agent's adapter with its key; no adapter, or no `deliver`, means
    the last 60 s, sender under 10 sends per minute. Refusals are `ApiError` → 422.
 4. Message + delivery row inserted in one transaction; an in-process event fires so
    long-polls wake.
-5. Delivery via the injected `deliver` (the tracker's). Outcome stored on the row.
+5. Delivery via the injected `deliver` (the tracker's). Status stored on the row.
    If the recipient is blocked in send-and-wait for a reply from this sender, the
-   message is returned through that call instead (`returned-to-waiter`).
+   message is returned through that call instead of pushed.
 6. Receipt is separate: the adapter captured the host transcript's size before
-   delivering and polls it for a line containing `#<message id>` in the host's
-   "user message" shape; then `receivedAt` is set.
+   delivering and watches it (file change events) for a line containing
+   `#<message id>` in the host's "user message" shape; then the row becomes
+   `received`. A pull marks its items received.
 7. With `wait`, the API blocks (up to 240 s) for the next message from the
    recipient in this DM and returns it inline.
 
@@ -155,10 +159,11 @@ Delivered text is one attribution line plus the body:
 | registered | the token | none: live by contact | none: `waiting`, the process pulls | on pull | none |
 
 Claude Code specifics: the token is consulted only if the posting process has
-exited, hence the helper. Sessions started before `init`, or whose token the daemon
-has forgotten after a restart, get `delivered-unattested` until they run `attach`
-or make a tool call through the shim; a bypass-mode session holds those behind a
-dialog.
+exited, hence the helper (`adapters/claude-code/post.ts`, run as its own process).
+Sessions started before `init`, or whose token the daemon has forgotten after a
+restart, are queued "no token" until they run `attach` or make a tool call through
+the shim; Claude Code then asks the user before injecting. The SessionStart hook
+is `modelbus attach`.
 
 Codex specifics: a thread with no turns yet cannot be queued to ("no rollout
 found"), shown as not reachable. Codex reads config at launch; sessions started
@@ -177,8 +182,8 @@ Methods: `ping`, `bind`, `attach`, `register`, `send`, `pull`, `who`, `log`. The
 method table in `daemon.ts` is the protocol; `client.ts` derives its types from it,
 so `rpc("who", { filter })` is checked at compile time. See `protocol.md`.
 
-Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `init`, `mcp`, `serve`,
-plus adapter verbs `hook`, `attach`, `post`); the MCP shim (`send`, `who`, and
+Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `attach`, `init`,
+`mcp`, `serve`); the MCP shim (`send`, `who`, and
 `sync` only with `--with-sync`; one-sentence instructions); any program via the
 socket. `MODELBUS_HOME` points clients at another instance. The CLI starts the
 daemon on demand for every command that needs it.

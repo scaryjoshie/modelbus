@@ -27,7 +27,7 @@ interface MessageEvent {
 
 export class Api {
   private readonly events = new EventEmitter();
-  private deliver: Deliver = async () => ({ outcome: "waiting" });
+  private deliver: Deliver = async () => ({ status: "queued", detail: "no push path" });
   /** conversation:replier pairs someone is currently blocked on inline. */
   private readonly waiting = new Set<string>();
 
@@ -75,11 +75,11 @@ export class Api {
     // A reply someone is blocked on inline is returned through that call, not also
     // pushed into their host (it would arrive twice).
     const delivery: DeliveryResult = this.waiting.has(`${conv.id}:${from.id}`)
-      ? { outcome: "returned-to-waiter" }
+      ? { status: "queued", detail: "returned inline to the waiting sender" }
       : await this.deliver(to, this.render(message, from), `#${message.id}`, () =>
           this.store.markReceived([message.id], to.id),
         );
-    this.store.recordDelivery(message.id, to.id, delivery.outcome, delivery.detail);
+    this.store.recordDelivery(message.id, to.id, delivery);
 
     const reply =
       opts.wait && opts.wait > 0

@@ -55,14 +55,15 @@ identity on the pseudo-host `cli`, for testing.
 | `register` | `{name}` | no | `{agent, token}` |
 | `bind` | | yes | `{agent}` |
 | `attach` | adapter-specific runtime info | yes | `{agent, attached}` |
-| `send` | `{to, body, wait?}` | yes | `{message, to, delivery: {outcome, detail?}, reply?}` |
+| `send` | `{to, body, wait?}` | yes | `{message, to, delivery: {status, detail?}, reply?}` |
 | `pull` | `{scope?, wait?, limit?}` | yes | `{items, more, moreElsewhere}` |
 | `who` | `{filter?, fresh?}` | no | `{agents: RosterEntry[]}` |
 | `log` | `{a?, b?}` | no | `{rows}` |
 
-`delivery.outcome` is `delivered`, `delivered-unattested`, `waiting`,
-`returned-to-waiter`, `unavailable`, or `error`. Errors come back as HTTP 4xx/5xx
-with `{error}`; 422 means the request was refused by a guard or a name lookup.
+`delivery.status` is `queued` (the recipient's host has it, or it waits for a pull;
+`detail` says which) or `failed` (the push failed; `detail` says why). `received`
+appears later in `log`. Errors come back as HTTP 4xx/5xx with `{error}`; 422 means
+the request was refused by a guard or a name lookup.
 
 From TypeScript, `src/client.ts` exports `rpc(method, params, identity?)` typed
 against the daemon's method table.

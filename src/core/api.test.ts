@@ -148,7 +148,7 @@ describe("protocol", () => {
         { kind: "token", token: other.token },
         unix,
       );
-      expect(sent.delivery.outcome).toBe("waiting");
+      expect(sent.delivery.status).toBe("queued");
       const pulled = await rpc("pull", {}, { kind: "token", token: app.token }, unix);
       expect(pulled.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["other: hi app"]);
       expect(pulled.items[0]?.body).not.toContain("[modelbus"); // pull returns the bare body
@@ -170,7 +170,7 @@ describe("protocol", () => {
     await rpc("bind", {}, bob, unix);
     const sent = await rpc("send", { to: "bob", body: "over the wire" }, alice, unix);
     expect(sent.to.name).toBe("bob");
-    expect(sent.delivery.outcome).toBe("waiting");
+    expect(sent.delivery.status).toBe("queued");
     const who = await rpc("who", {}, undefined, unix);
     expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
     d.stop();
@@ -180,6 +180,7 @@ describe("protocol", () => {
     const pulled = await rpc("pull", {}, bob, unix);
     expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
     const log = await rpc("log", {}, undefined, unix);
+    expect(log.rows[0]?.status).toBe("received");
     expect(log.rows[0]?.receivedAt).not.toBeNull();
     d.stop();
   });

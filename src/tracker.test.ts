@@ -13,7 +13,7 @@ class FakeHost implements HostAdapter {
   async deliver(key: string, text: string, _marker: string, onReceipt: () => void) {
     this.delivered.push({ key, text });
     onReceipt();
-    return { outcome: "delivered" as const };
+    return { status: "queued" as const };
   }
 }
 
@@ -66,7 +66,7 @@ describe("tracker", () => {
     const result = await t.deliver(agent, "hello", "#m1", () => {
       receipt = true;
     });
-    expect(result.outcome).toBe("delivered");
+    expect(result.status).toBe("queued");
     expect(receipt).toBe(true);
     expect(host.delivered).toEqual([{ key: "k1", text: "hello" }]);
   });
@@ -76,7 +76,7 @@ describe("tracker", () => {
     const a = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
     expect(t.list().map((e) => `${e.name}:${e.note}`)).toEqual(["lonely:by sync"]);
     const result = await t.deliver(a, "hi", "#m", () => undefined);
-    expect(result.outcome).toBe("waiting");
+    expect(result.status).toBe("queued");
   });
 
   test("identify binds to the observed agent, not a new one", async () => {

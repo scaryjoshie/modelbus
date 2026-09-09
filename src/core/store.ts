@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import type { DeliveryOutcome } from "./delivery.ts";
+import type { DeliveryResult, DeliveryStatus } from "./delivery.ts";
 import { migrationsDir } from "./paths.ts";
 import {
   type AgentRow,
@@ -38,7 +38,7 @@ export interface InboxItem extends Message {
 export interface LogRow extends Message {
   fromName: string;
   toName: string;
-  outcome: string | null;
+  status: DeliveryStatus;
   detail: string | null;
   receivedAt: number | null;
 }
@@ -226,7 +226,7 @@ export class Store {
     if (!messageIds.length) return;
     this.db
       .update(deliveries)
-      .set({ receivedAt: Date.now() })
+      .set({ status: "received", receivedAt: Date.now() })
       .where(
         and(
           inArray(deliveries.messageId, messageIds),
@@ -237,11 +237,18 @@ export class Store {
       .run();
   }
 
-  recordDelivery(messageId: string, agentId: string, outcome: DeliveryOutcome, detail?: string) {
+  /** Record a push result. Never downgrades a delivery already received. */
+  recordDelivery(messageId: string, agentId: string, result: DeliveryResult): void {
     this.db
       .update(deliveries)
-      .set({ outcome, detail: detail ?? null })
-      .where(and(eq(deliveries.messageId, messageId), eq(deliveries.toAgentId, agentId)))
+      .set({ status: result.status, detail: result.detail ?? null })
+      .where(
+        and(
+          eq(deliveries.messageId, messageId),
+          eq(deliveries.toAgentId, agentId),
+          isNull(deliveries.receivedAt),
+        ),
+      )
       .run();
   }
 
@@ -298,7 +305,7 @@ export class Store {
       SELECT m.seq, m.id, m.conversation_id AS conversationId, m.from_agent_id AS fromAgentId,
              m.body, m.created_at AS createdAt,
              fa.name AS fromName, ta.name AS toName,
-             d.outcome, d.detail, d.received_at AS receivedAt
+             d.status, d.detail, d.received_at AS receivedAt
       FROM messages m
       JOIN agents fa ON fa.id = m.from_agent_id
       JOIN deliveries d ON d.message_id = m.id

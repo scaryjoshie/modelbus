@@ -21,8 +21,8 @@ Core is what would exist with zero known hosts. `scripts/check-layers.ts` enforc
 | clients | `src/cli.ts`, `src/mcp.ts`, `src/identity.ts`, `src/client.ts`, `src/ensure.ts` | anything |
 | composition root | `src/daemon.ts`, `src/tracker.ts` | anything |
 
-Adapters are the only place a host's name may appear. Host-specific CLI verbs are
-contributed by adapters through `commands()`, never written into `cli.ts`.
+Adapters are the only place a host's name may appear. Each adapter is a folder:
+`index.ts` (the class), the host's layout, and `configure.ts` (what `init` writes).
 
 ## Conventions
 
@@ -35,7 +35,8 @@ and Effective TypeScript. Concretely, in this repo:
   `ApiError` (caller's fault) or plain `Error` (ours).
 - No `any`, no non-null assertions, no dynamic `import()` to dodge cycles.
 - Small files with one responsibility. Classes only for things that hold state.
-- The store is the only module that touches SQL. Schema lives in `src/core/schema.ts`;
+- The store is the only module that touches *our* SQL (an adapter may read its
+  host's own database). Schema lives in `src/core/schema.ts`;
   change it, then `bun run migrate:generate`, and commit the migration. Store only
   what must survive a restart; presence is in memory. Don't add columns nothing reads.
 - Protocol limits live in `src/core/guards.ts`; a timing local to one module is a

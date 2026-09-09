@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import { allAdapters } from "./adapters/index.ts";
-import { type Identity, type MethodName, type Params, rpc } from "./client.ts";
-import type { Command, CommandContext } from "./core/adapter.ts";
+import { type Identity, rpc } from "./client.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
@@ -39,6 +38,13 @@ async function identityFor(values: { as?: string; token?: string }): Promise<Ide
   return (await whoAmI({ as: values.as })).identity;
 }
 
+interface Command {
+  usage: string;
+  /** Runs without the daemon (the CLI starts it for every other command). */
+  standalone?: boolean;
+  run(args: string[]): Promise<void>;
+}
+
 const commands: Record<string, Command> = {
   serve: {
     standalone: true,
@@ -57,7 +63,7 @@ const commands: Record<string, Command> = {
   },
   send: {
     usage: "send [--as A|--token T] --to B [--wait N] <text>   send a DM",
-    async run({ args }) {
+    async run(args) {
       const { values, positionals } = parseArgs({
         args,
         options: {
@@ -75,16 +81,14 @@ const commands: Record<string, Command> = {
         { to: values.to, body, wait: values.wait ? Number(values.wait) : undefined },
         await identityFor(values),
       );
-      const d = r.delivery.detail
-        ? `${r.delivery.outcome}: ${r.delivery.detail}`
-        : r.delivery.outcome;
-      console.log(`sent to ${r.to.name} (${d})`);
+      const d = r.delivery;
+      console.log(`sent to ${r.to.name} (${d.status}${d.detail ? `: ${d.detail}` : ""})`);
       if (values.wait) console.log(r.reply ? renderItem(r.reply) : `no reply in ${values.wait}s`);
     },
   },
   sync: {
     usage: "sync [--as A|--token T] [--scope B] [--wait N]    read my inbox",
-    async run({ args }) {
+    async run(args) {
       const { values } = parseArgs({
         args,
         options: {
@@ -106,7 +110,7 @@ const commands: Record<string, Command> = {
   },
   who: {
     usage: "who [filter] [--fresh]                 agents on the bus",
-    async run({ args }) {
+    async run(args) {
       const filter = args.find((x) => !x.startsWith("--"));
       const r = await rpc("who", {
         filter,
@@ -130,20 +134,20 @@ const commands: Record<string, Command> = {
   },
   log: {
     usage: "log [--conversation A,B]               messages with delivery state",
-    async run({ args }) {
+    async run(args) {
       const { values } = parseArgs({ args, options: { conversation: { type: "string" } } });
       const [a, b] = (values.conversation ?? "").split(",").filter(Boolean);
       const r = await rpc("log", { a, b });
       console.log(
         table(
-          ["seq", "id", "from", "to", "delivery", "receipt", "body"],
+          ["seq", "id", "from", "to", "status", "detail", "body"],
           r.rows.map((x) => [
             String(x.seq),
             x.id,
             x.fromName,
             x.toName,
-            x.outcome ?? "",
-            x.receivedAt ? "received" : "unreceived",
+            x.status,
+            x.detail ?? "",
             x.body.split("\n")[0]?.slice(0, 60) ?? "",
           ]),
         ),
@@ -152,7 +156,7 @@ const commands: Record<string, Command> = {
   },
   register: {
     usage: "register --name N                      join as any process; prints a token",
-    async run({ args }) {
+    async run(args) {
       const { values } = parseArgs({ args, options: { name: { type: "string" } } });
       if (!values.name) throw new Error("usage: modelbus register --name <name>");
       const r = await rpc("register", { name: values.name });
@@ -160,10 +164,22 @@ const commands: Record<string, Command> = {
       console.log(r.token);
     },
   },
+  attach: {
+    usage:
+      "attach                                 bind the host session this runs inside; hand over its door",
+    async run() {
+      const me = await whoAmI();
+      const r = me.attach
+        ? await rpc("attach", me.attach, me.identity)
+        : { agent: (await rpc("bind", {}, me.identity)).agent, attached: false };
+      // As a SessionStart hook, stdout is added to the session's context.
+      console.log(`modelbus: this session is registered as "${r.agent.name}".`);
+    },
+  },
   mcp: {
     standalone: true,
     usage: "mcp [--with-sync]                      stdio MCP shim (spawned by hosts)",
-    async run({ args }) {
+    async run(args) {
       const { runMcpShim } = await import("./mcp.ts");
       await runMcpShim({ withSync: args.includes("--with-sync") });
     },
@@ -171,7 +187,7 @@ const commands: Record<string, Command> = {
   init: {
     standalone: true,
     usage: "init [--write]                         show/apply host configuration",
-    async run({ args }) {
+    async run(args) {
       const plans = allAdapters()
         .map((a) => a.configure?.())
         .filter((p) => p !== undefined);
@@ -182,8 +198,6 @@ const commands: Record<string, Command> = {
   },
 };
 
-for (const adapter of allAdapters()) Object.assign(commands, adapter.commands?.() ?? {});
-
 const [name = "help", ...args] = process.argv.slice(2);
 const cmd = commands[name];
 if (!cmd) {
@@ -192,15 +206,7 @@ if (!cmd) {
   );
   process.exit(name === "help" ? 0 : 1);
 }
-const ctx: CommandContext = {
-  args,
-  stdin: () => Bun.stdin.text(),
-  // Adapter commands are written against the loose CommandContext signature.
-  rpc: <T>(method: string, params: Record<string, unknown>, identity?: unknown) =>
-    rpc(method as MethodName, params as Params<MethodName>, identity as Identity) as Promise<T>,
-  ensureDaemon,
-};
-(cmd.standalone ? cmd.run(ctx) : ensureDaemon().then(() => cmd.run(ctx))).catch((e) => {
+(cmd.standalone ? cmd.run(args) : ensureDaemon().then(() => cmd.run(args))).catch((e) => {
   console.error(e instanceof Error ? e.message : String(e));
   process.exit(1);
 });

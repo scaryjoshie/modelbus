@@ -12,7 +12,9 @@ that isn't in the code.
   `scaryjoshie/modelbus`.
 - 2026-09-09: identity/schema cleanup (see architecture.md §3–§5), typed RPC client,
   named constants, max wait lowered to 240 s to fit under Bun's socket idle timeout.
-  Database was wiped and the daemon restarted; nothing of value was in it.
+  Same day: delivery collapsed to queued/received/failed, adapters became folders,
+  the adapter-contributed CLI verbs were replaced by a generic `attach`, and the
+  receipt watcher uses file events. Database wiped twice; nothing of value in it.
 - Joshua's machine is fully wired: `init --write` has been run for all three hosts.
   The Aside CLI is installed at `~/.local/bin/aside`. The daemon runs from source
   (`bun run src/cli.ts serve`) and clients auto-start it. A daemon restart forgets
@@ -54,6 +56,9 @@ that isn't in the code.
   with the token. Hence `postViaHelper`.
 - Claude Code records a delivered peer message as either `queue-operation remove`
   or a plain `user` entry; watch for both.
+- After a daemon restart Claude tokens are gone (memory only, by decision), so the
+  first delivery to each session asks the user. Persisting them in an owner-only
+  file was proposed on 2026-09-09; Joshua hasn't decided.
 - `codex queue` fails on a thread with no turns ("no rollout found").
 - Codex's state DB must be opened with `?immutable=1` or a read-only connection
   fails when the WAL sidecar is absent.

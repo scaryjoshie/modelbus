@@ -8,9 +8,7 @@ import { join, relative } from "node:path";
  *   core      src/core/**            may import: nothing else in src
  *   helpers   src/util/**            may import: nothing else in src
  *   adapters  src/adapters/**        may import: core, util
- *   clients   cli, mcp, identity,    may import: core, util, adapters (composition), client, ensure, render, tracker
- *             client, ensure, render
- *   root      daemon, tracker        may import: anything
+ *   clients   cli, mcp, identity, client, ensure, render, daemon, tracker: anything
  *
  * Fails with a list of violations. Run as part of `bun run check`.
  */

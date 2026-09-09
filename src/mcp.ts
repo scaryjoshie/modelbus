@@ -52,8 +52,8 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
     async ({ to, body, wait }) => {
       try {
         const r = await rpc("send", { to, body, wait }, identity);
-        const bad = r.delivery.outcome === "error" || r.delivery.outcome === "unavailable";
-        let out = `sent to ${r.to.name}${bad ? ` (${r.delivery.outcome}: ${r.delivery.detail})` : ""}`;
+        const d = r.delivery;
+        let out = `sent to ${r.to.name}${d.status === "failed" ? ` (not delivered: ${d.detail})` : ""}`;
         if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
         return text(out);
       } catch (e) {

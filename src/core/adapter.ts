@@ -44,21 +44,6 @@ export interface ConfigurePlan {
   apply(): Promise<string[]>;
 }
 
-/** Facilities a CLI command contributed by an adapter may use. */
-export interface CommandContext {
-  args: string[];
-  stdin(): Promise<string>;
-  rpc<T>(method: string, params: Record<string, unknown>, identity?: unknown): Promise<T>;
-  ensureDaemon(): Promise<void>;
-}
-
-export interface Command {
-  usage: string;
-  /** Runs without the daemon (the CLI starts it for every other command). */
-  standalone?: boolean;
-  run(ctx: CommandContext): Promise<void>;
-}
-
 export interface HostAdapter {
   readonly host: string;
   /** Everything live on this host right now. Must not throw; return [] instead. */
@@ -76,6 +61,4 @@ export interface HostAdapter {
   attach?(key: string, info: Record<string, unknown>): void;
   /** What `init` writes for this host. */
   configure?(): ConfigurePlan;
-  /** CLI verbs this host needs (e.g. a hook entry point). */
-  commands?(): Record<string, Command>;
 }

@@ -116,11 +116,11 @@ export class Tracker {
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
     const adapter = this.adapters.get(agent.host);
-    if (!adapter?.deliver) return { outcome: "waiting", detail: "no push path" };
+    if (!adapter?.deliver) return { status: "queued", detail: "waiting for it to sync" };
     try {
       return await adapter.deliver(agent.hostKey, text, marker, onReceipt);
     } catch (e) {
-      return { outcome: "error", detail: e instanceof Error ? e.message : String(e) };
+      return { status: "failed", detail: e instanceof Error ? e.message : String(e) };
     }
   }
 

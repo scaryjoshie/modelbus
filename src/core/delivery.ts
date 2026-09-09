@@ -1,27 +1,22 @@
 /**
- * What happened when the bus tried to put a message into a host session.
- * A typed union rather than a string so every caller handles every case.
+ * What happened to a message for one recipient. Sending is synchronous: either the
+ * server accepted the message or `send` threw. After that each recipient's copy is
+ * in exactly one of these states.
  */
-export type DeliveryOutcome =
-  /** the host accepted it into the session (queue, socket, or command) */
-  | "delivered"
-  /** accepted, but the host may still hold it for the user (Claude Code, no token) */
-  | "delivered-unattested"
-  /** stored; the recipient must pull it (no push path for this host) */
-  | "waiting"
-  /** returned inline to a caller blocked in send(wait); not pushed to the host */
-  | "returned-to-waiter"
-  /** the host cannot be reached right now (no socket, no adapter, not queueable) */
-  | "unavailable"
-  /** the push was attempted and failed */
-  | "error";
+export type DeliveryStatus =
+  /** the server has it; pushed into the host's queue, or waiting for the recipient to pull */
+  | "queued"
+  /** the recipient's session has consumed it (transcript shows it, or it was pulled) */
+  | "received"
+  /** the push was attempted and failed; the recipient can still pull it */
+  | "failed";
 
+/** What an adapter reports right after a push. Receipt comes later, via onReceipt. */
 export interface DeliveryResult {
-  outcome: DeliveryOutcome;
-  /** Short human-readable reason for unavailable/error, or the mechanism used. */
+  status: "queued" | "failed";
+  /** How it was queued, or why it failed. */
   detail?: string;
 }
 
-export const delivered = (detail?: string): DeliveryResult => ({ outcome: "delivered", detail });
-export const unavailable = (detail: string): DeliveryResult => ({ outcome: "unavailable", detail });
-export const failed = (detail: string): DeliveryResult => ({ outcome: "error", detail });
+export const queued = (detail?: string): DeliveryResult => ({ status: "queued", detail });
+export const failed = (detail: string): DeliveryResult => ({ status: "failed", detail });
