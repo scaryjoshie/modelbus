@@ -32,7 +32,7 @@ describe("dm basics", () => {
     const { api, a, b } = fresh();
     await api.send({ fromId: a.id, to: "bob", body: "hi bob" });
     const first = await api.pull({ agentId: b.id });
-    expect(first.items.map((i) => `${i.from_name}: ${i.body}`)).toEqual(["alice: hi bob"]);
+    expect(first.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["alice: hi bob"]);
     const second = await api.pull({ agentId: b.id });
     expect(second.items).toHaveLength(0);
   });
@@ -155,13 +155,13 @@ describe("protocol: registration", () => {
       expect(app.token.length).toBeGreaterThan(8);
 
       // other -> app: delivered by running app's command
-      const sent = await rpc<{ wakeResult: string }>(
+      const sent = await rpc<{ delivery: { outcome: string } }>(
         "send",
         { to: "app", body: "hi app" },
         { kind: "token", token: other.token },
         unix,
       );
-      expect(sent.wakeResult).toBe("delivered");
+      expect(sent.delivery.outcome).toBe("delivered");
       expect(await Bun.file(out).text()).toContain("hi app");
       expect(await Bun.file(out).text()).toContain("[modelbus #");
 
@@ -172,13 +172,13 @@ describe("protocol: registration", () => {
         { kind: "token", token: app.token },
         unix,
       );
-      const pulled = await rpc<{ items: Array<{ body: string; from_name: string }> }>(
+      const pulled = await rpc<{ items: Array<{ body: string; fromName: string }> }>(
         "pull",
         {},
         { kind: "token", token: other.token },
         unix,
       );
-      expect(pulled.items.map((i) => `${i.from_name}: ${i.body}`)).toEqual(["app: hi other"]);
+      expect(pulled.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["app: hi other"]);
 
       // an unknown token is refused
       await expect(
@@ -222,14 +222,14 @@ describe("persistence", () => {
     const alice = { kind: "cli", as: "alice" } as const;
     const bob = { kind: "cli", as: "bob" } as const;
     await rpc("bind", {}, bob, unix);
-    const sent = await rpc<{ to: { name: string }; wakeResult: string }>(
+    const sent = await rpc<{ to: { name: string }; delivery: { outcome: string } }>(
       "send",
       { to: "bob", body: "over the wire" },
       alice,
       unix,
     );
     expect(sent.to.name).toBe("bob");
-    expect(sent.wakeResult).toBe("none");
+    expect(sent.delivery.outcome).toBe("waiting");
     const who = await rpc<{ agents: Array<{ name: string }> }>("who", {}, undefined, unix);
     expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
     d.stop();
@@ -237,13 +237,13 @@ describe("persistence", () => {
     d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
     const pulled = await rpc<{ items: Array<{ body: string }> }>("pull", {}, bob, unix);
     expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
-    const log = await rpc<{ rows: Array<{ received_at: number | null }> }>(
+    const log = await rpc<{ rows: Array<{ receivedAt: number | null }> }>(
       "log",
       {},
       undefined,
       unix,
     );
-    expect(log.rows[0]?.received_at).not.toBeNull();
+    expect(log.rows[0]?.receivedAt).not.toBeNull();
     d.stop();
   });
 });

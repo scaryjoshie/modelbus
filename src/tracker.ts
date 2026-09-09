@@ -1,19 +1,20 @@
 import type { HostAdapter, Observation } from "./core/adapter.ts";
-import type { Agent, Store } from "./core/store.ts";
+import type { DeliveryResult } from "./core/delivery.ts";
+import type { Agent, AgentState, Attestation, Store } from "./core/store.ts";
 
 /**
  * Host-agnostic session tracking. Owns the reconcile loop: ask every adapter what
  * is live, match observations to agents by (host, key), create agents for new
- * ones, mark the rest gone. Also dispatches delivery to the right adapter with the
- * agent's sealed handle. It never interprets a handle or a key.
+ * ones, mark the rest gone. Dispatches delivery to the right adapter with the
+ * agent's sealed handle. Never interprets a handle or a key.
  */
 
 export interface RosterEntry {
   id: string;
   name: string;
   host: string;
-  state: Agent["state"];
-  attestation?: "observed" | "attested";
+  state: AgentState;
+  attestation?: Attestation;
   cwd?: string;
   status?: string;
   title?: string;
@@ -26,17 +27,13 @@ export interface RosterEntry {
 export class Tracker {
   private readonly adapters = new Map<string, HostAdapter>();
   private timer: ReturnType<typeof setInterval> | undefined;
-  private reconciling: Promise<void> | undefined;
+  private inFlight: Promise<void> | undefined;
 
   constructor(
     readonly store: Store,
     adapters: HostAdapter[],
   ) {
     for (const a of adapters) this.adapters.set(a.host, a);
-  }
-
-  adapter(host: string): HostAdapter | undefined {
-    return this.adapters.get(host);
   }
 
   start(intervalMs = 3000): void {
@@ -50,11 +47,10 @@ export class Tracker {
 
   /** One pass over every adapter. Concurrent calls share the in-flight pass. */
   reconcile(): Promise<void> {
-    if (this.reconciling) return this.reconciling;
-    this.reconciling = this.reconcileOnce().finally(() => {
-      this.reconciling = undefined;
+    this.inFlight ??= this.reconcileOnce().finally(() => {
+      this.inFlight = undefined;
     });
-    return this.reconciling;
+    return this.inFlight;
   }
 
   private async reconcileOnce(): Promise<void> {
@@ -68,7 +64,7 @@ export class Tracker {
       const seen = new Set<string>();
       for (const o of observations) {
         // Only confirmed top-level sessions become peers; subagents and uncertain
-        // classifications never silently turn into agents (spec section 6).
+        // classifications never silently turn into agents.
         if (o.relationship !== "top-level") continue;
         const agent = this.store.bind({
           host: adapter.host,
@@ -79,18 +75,7 @@ export class Tracker {
           evidence: o.evidence,
         });
         seen.add(agent.id);
-        this.store.upsertPresence(agent.id, {
-          pid: o.pid ?? null,
-          tty: null,
-          cwd: o.cwd ?? null,
-          status: o.status ?? null,
-          title: o.title ?? null,
-          relationship: o.relationship,
-          parent_key: o.parentKey ?? null,
-          reachable: o.reachable ? 1 : 0,
-          note: o.note ?? null,
-          started_at: o.startedAt ?? null,
-        });
+        this.store.upsertPresence(agent.id, o);
       }
       for (const a of this.store.listAgents(["live"])) {
         if (a.host === adapter.host && !seen.has(a.id)) this.store.setState(a.id, "gone");
@@ -98,17 +83,13 @@ export class Tracker {
     }
   }
 
-  /**
-   * A session identifying itself (hook or shim). Stronger than observation: the
-   * handle becomes attested. Returns the agent.
-   */
+  /** A session identifying itself (hook or shim): stronger than observation. */
   identify(opts: { host: string; key: string; name: string; evidence: string }): Agent {
     const adapter = this.adapters.get(opts.host);
-    const handle = adapter ? adapter.handleFromKey(opts.key) : { key: opts.key };
     return this.store.bind({
       host: opts.host,
       key: opts.key,
-      handle,
+      handle: adapter ? adapter.handleFromKey(opts.key) : { key: opts.key },
       durability: "session",
       preferredName: opts.name,
       evidence: opts.evidence,
@@ -131,35 +112,35 @@ export class Tracker {
     text: string,
     marker: string,
     onReceipt: () => void,
-  ): Promise<string> {
+  ): Promise<DeliveryResult> {
     const h = this.store.handleOf(agent.id);
     const adapter = h && this.adapters.get(h.host);
-    if (!h || !adapter?.deliver) return "none";
+    if (!h || !adapter?.deliver) return { outcome: "waiting", detail: "no push path" };
     try {
       return await adapter.deliver(JSON.parse(h.handle), text, marker, onReceipt);
     } catch (e) {
-      return `error: ${e instanceof Error ? e.message : String(e)}`;
+      return { outcome: "error", detail: e instanceof Error ? e.message : String(e) };
     }
   }
 
-  list(filter?: string, states: Agent["state"][] = ["live"]): RosterEntry[] {
-    const entries = this.store.listAgents(states).map((a) => {
+  list(filter?: string, states: AgentState[] = ["live"]): RosterEntry[] {
+    const entries = this.store.listAgents(states).map((a): RosterEntry => {
       const p = this.store.presenceOf(a.id);
       const h = this.store.handleOf(a.id);
       return {
         id: a.id,
         name: a.name,
         host: a.host,
-        state: a.state,
-        attestation: h?.attestation,
+        state: a.state as AgentState,
+        attestation: h?.attestation as Attestation | undefined,
         cwd: p?.cwd ?? undefined,
         status: p?.status ?? undefined,
         title: p?.title ?? undefined,
         relationship: p?.relationship,
-        reachable: a.host === "cli" ? true : Boolean(p?.reachable),
+        reachable: a.host === "cli" || Boolean(p?.reachable),
         note: p?.note ?? undefined,
-        lastSeen: a.last_seen,
-      } satisfies RosterEntry;
+        lastSeen: a.lastSeen,
+      };
     });
     entries.sort((x, y) => Number(y.reachable) - Number(x.reachable) || y.lastSeen - x.lastSeen);
     if (!filter) return entries;

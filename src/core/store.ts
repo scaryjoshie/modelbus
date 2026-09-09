@@ -2,211 +2,134 @@ import { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import type { Durability, Relationship } from "./adapter.ts";
+import type { DeliveryOutcome } from "./delivery.ts";
+import { migrationsDir } from "./paths.ts";
+import {
+  type AgentRow,
+  agents,
+  type ConversationRow,
+  conversations,
+  deliveries,
+  type HandleRow,
+  handles,
+  type MessageRow,
+  messages,
+  type PresenceRow,
+  participants,
+  presence,
+} from "./schema.ts";
 
 /**
- * SQLite store. One file, WAL mode. See docs/poc-spec.md section 5.
+ * The store: the only module that touches SQL. Everything else uses these methods.
+ * Schema lives in schema.ts; migrations are applied on open.
  *
- * Identity: an agent is ours (id, name, host). Its host identity is a sealed handle
- * in `handles`, found by an opaque key. Presence is what the tracker last observed.
- * Inbox state lives on `deliveries.received_at`, not on a per-agent cursor.
+ * Inbox state is `deliveries.receivedAt`, not a per-agent cursor, so a scoped pull or
+ * a send(wait) can consume one DM without skipping others.
  */
 
-export interface Agent {
-  id: string;
-  name: string;
-  host: string;
-  created_at: number;
-  last_seen: number;
-  state: "live" | "gone" | "unknown";
-  /** "host": follows the host's own name for the session; "user": pinned by the user. */
-  name_source: "host" | "user";
-}
-
-export interface Handle {
-  agent_id: string;
-  host: string;
-  key: string;
-  /** JSON-serialized sealed handle; the core never reads inside. */
-  handle: string;
-  durability: Durability;
-  /** How we came to associate this handle with the agent. */
-  evidence: string;
-  /** "attested" once the session identified itself (hook/shim); "observed" otherwise. */
-  attestation: "observed" | "attested";
-  bound_at: number;
-}
-
-export interface Presence {
-  agent_id: string;
-  pid: number | null;
-  tty: string | null;
-  cwd: string | null;
-  status: string | null;
-  title: string | null;
-  relationship: Relationship;
-  parent_key: string | null;
-  reachable: number;
-  note: string | null;
-  started_at: number | null;
-  first_seen: number;
-  last_seen: number;
-}
-
-export interface Conversation {
-  id: string;
-  kind: "dm";
-  key: string;
-  created_at: number;
-}
-
-export interface Message {
-  seq: number;
-  id: string;
-  conversation_id: string;
-  from_agent_id: string;
-  body: string;
-  created_at: number;
-}
+export type Agent = AgentRow;
+export type Handle = HandleRow;
+export type Presence = PresenceRow;
+export type Conversation = ConversationRow;
+export type Message = MessageRow;
+export type AgentState = "live" | "gone" | "unknown";
+export type Attestation = "observed" | "attested";
 
 export interface InboxItem extends Message {
-  from_name: string;
-  from_host: string;
+  fromName: string;
+  fromHost: string;
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS agents (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  host TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL,
-  state TEXT NOT NULL DEFAULT 'live',
-  name_source TEXT NOT NULL DEFAULT 'host'
-);
-CREATE UNIQUE INDEX IF NOT EXISTS agents_name ON agents(name);
-CREATE TABLE IF NOT EXISTS handles (
-  agent_id TEXT PRIMARY KEY REFERENCES agents(id),
-  host TEXT NOT NULL,
-  key TEXT NOT NULL,
-  handle TEXT NOT NULL,
-  durability TEXT NOT NULL,
-  evidence TEXT NOT NULL,
-  attestation TEXT NOT NULL DEFAULT 'observed',
-  bound_at INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS handles_key ON handles(host, key);
-CREATE TABLE IF NOT EXISTS presence (
-  agent_id TEXT PRIMARY KEY REFERENCES agents(id),
-  pid INTEGER, tty TEXT, cwd TEXT, status TEXT, title TEXT,
-  relationship TEXT NOT NULL DEFAULT 'unknown',
-  parent_key TEXT,
-  reachable INTEGER NOT NULL DEFAULT 0,
-  note TEXT,
-  started_at INTEGER,
-  first_seen INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS conversations (
-  id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,
-  key TEXT NOT NULL UNIQUE,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS participants (
-  conversation_id TEXT NOT NULL REFERENCES conversations(id),
-  agent_id TEXT NOT NULL REFERENCES agents(id),
-  PRIMARY KEY (conversation_id, agent_id)
-);
-CREATE TABLE IF NOT EXISTS messages (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  id TEXT NOT NULL UNIQUE,
-  conversation_id TEXT NOT NULL REFERENCES conversations(id),
-  from_agent_id TEXT NOT NULL REFERENCES agents(id),
-  body TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS messages_conv_seq ON messages(conversation_id, seq);
-CREATE TABLE IF NOT EXISTS deliveries (
-  message_id TEXT NOT NULL REFERENCES messages(id),
-  to_agent_id TEXT NOT NULL REFERENCES agents(id),
-  wake_provider TEXT,
-  wake_attempted_at INTEGER,
-  wake_result TEXT,
-  received_at INTEGER,
-  PRIMARY KEY (message_id, to_agent_id)
-);
-CREATE INDEX IF NOT EXISTS deliveries_inbox ON deliveries(to_agent_id, received_at);
-`;
+export interface LogRow extends Message {
+  fromName: string;
+  toName: string;
+  wakeProvider: string | null;
+  wakeResult: string | null;
+  wakeDetail: string | null;
+  receivedAt: number | null;
+}
 
 export function newId(): string {
   return randomBytes(5).toString("base64url").replace(/[-_]/g, "x").slice(0, 7);
 }
 
-/** A display name safe for a roster row: single line, trimmed, capped at 40. */
-export function sanitizeName(raw: string): string {
-  const one = raw.replace(/\s+/g, " ").trim();
-  if (!one) return "agent";
-  return one.length <= 40 ? one : `${one.slice(0, 39).trimEnd()}…`;
-}
-
 export class Store {
-  readonly db: Database;
+  private readonly sqlite: Database;
+  readonly db: BunSQLiteDatabase;
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path, { create: true });
-    this.db.run("PRAGMA journal_mode = WAL");
-    this.db.run("PRAGMA foreign_keys = ON");
-    this.db.exec(SCHEMA);
+    this.sqlite = new Database(path, { create: true });
+    this.sqlite.run("PRAGMA journal_mode = WAL");
+    this.sqlite.run("PRAGMA foreign_keys = ON");
+    this.db = drizzle(this.sqlite);
+    migrate(this.db, { migrationsFolder: migrationsDir() });
   }
 
   close(): void {
-    this.db.close();
+    this.sqlite.close();
   }
 
   // ---- agents -------------------------------------------------------------
 
-  agentByName(name: string): Agent | null {
-    return this.db.query<Agent, [string]>("SELECT * FROM agents WHERE name = ?").get(name);
+  agentByName(name: string): Agent | undefined {
+    return this.db.select().from(agents).where(eq(agents.name, name)).get();
   }
 
-  agentById(id: string): Agent | null {
-    return this.db.query<Agent, [string]>("SELECT * FROM agents WHERE id = ?").get(id);
+  agentById(id: string): Agent | undefined {
+    return this.db.select().from(agents).where(eq(agents.id, id)).get();
   }
 
-  listAgents(states: Agent["state"][] = ["live"]): Agent[] {
-    const marks = states.map(() => "?").join(",");
+  listAgents(states: AgentState[] = ["live"]): Agent[] {
     return this.db
-      .query<Agent, string[]>(
-        `SELECT * FROM agents WHERE state IN (${marks}) ORDER BY last_seen DESC`,
-      )
-      .all(...states);
+      .select()
+      .from(agents)
+      .where(inArray(agents.state, states))
+      .orderBy(desc(agents.lastSeen))
+      .all();
   }
 
   touch(agentId: string): void {
-    this.db.run("UPDATE agents SET last_seen = ? WHERE id = ?", [Date.now(), agentId]);
+    this.db.update(agents).set({ lastSeen: Date.now() }).where(eq(agents.id, agentId)).run();
   }
 
-  setState(agentId: string, state: Agent["state"]): void {
-    this.db.run("UPDATE agents SET state = ? WHERE id = ?", [state, agentId]);
+  setState(agentId: string, state: AgentState): void {
+    this.db.update(agents).set({ state }).where(eq(agents.id, agentId)).run();
+  }
+
+  /** Pin a user-chosen name; the host's name no longer overrides it. */
+  rename(agentId: string, name: string): string {
+    const free = this.freeName(name, agentId);
+    this.db
+      .update(agents)
+      .set({ name: free, nameSource: "user" })
+      .where(eq(agents.id, agentId))
+      .run();
+    return free;
   }
 
   // ---- handles (identity) -------------------------------------------------
 
-  handleByKey(host: string, key: string): Handle | null {
+  handleByKey(host: string, key: string): Handle | undefined {
     return this.db
-      .query<Handle, [string, string]>("SELECT * FROM handles WHERE host = ? AND key = ?")
-      .get(host, key);
+      .select()
+      .from(handles)
+      .where(and(eq(handles.host, host), eq(handles.key, key)))
+      .get();
   }
 
-  handleOf(agentId: string): Handle | null {
-    return this.db.query<Handle, [string]>("SELECT * FROM handles WHERE agent_id = ?").get(agentId);
+  handleOf(agentId: string): Handle | undefined {
+    return this.db.select().from(handles).where(eq(handles.agentId, agentId)).get();
   }
 
   /**
    * Find the agent behind (host, key) or create one. The handle is stored sealed.
-   * Attestation only ever moves from observed to attested.
+   * Attestation only ever moves from observed to attested. The display name follows
+   * the host's until the user pins one.
    */
   bind(opts: {
     host: string;
@@ -215,61 +138,69 @@ export class Store {
     durability: Durability;
     preferredName: string;
     evidence: string;
-    attestation?: "observed" | "attested";
+    attestation?: Attestation;
   }): Agent {
     const now = Date.now();
     const existing = this.handleByKey(opts.host, opts.key);
-    if (existing) {
-      const agent = this.agentById(existing.agent_id);
-      if (agent) {
-        this.db.run("UPDATE agents SET last_seen = ?, state = 'live' WHERE id = ?", [
-          now,
-          agent.id,
-        ]);
-        // Follow the host's name until the user pins one (e.g. Codex titles a thread
-        // after its first turn). Our id never changes.
-        const preferred = sanitizeName(opts.preferredName);
-        if (agent.name_source === "host" && agent.name !== preferred) {
-          const free = this.freeName(preferred, agent.id);
-          if (free === preferred) {
-            this.db.run("UPDATE agents SET name = ? WHERE id = ?", [free, agent.id]);
-          }
-        }
-        if (opts.attestation === "attested" && existing.attestation !== "attested") {
-          this.db.run(
-            "UPDATE handles SET attestation = 'attested', evidence = ?, handle = ? WHERE agent_id = ?",
-            [opts.evidence, JSON.stringify(opts.handle), agent.id],
-          );
-        }
-        return this.agentById(agent.id) as Agent;
+    const agent = existing && this.agentById(existing.agentId);
+    if (existing && agent) {
+      this.db
+        .update(agents)
+        .set({ lastSeen: now, state: "live" })
+        .where(eq(agents.id, agent.id))
+        .run();
+      if (opts.attestation === "attested" && existing.attestation !== "attested") {
+        this.db
+          .update(handles)
+          .set({
+            attestation: "attested",
+            evidence: opts.evidence,
+            handle: JSON.stringify(opts.handle),
+          })
+          .where(eq(handles.agentId, agent.id))
+          .run();
       }
+      if (agent.nameSource === "host" && agent.name !== opts.preferredName) {
+        const free = this.freeName(opts.preferredName, agent.id);
+        if (free === opts.preferredName) {
+          this.db.update(agents).set({ name: free }).where(eq(agents.id, agent.id)).run();
+        }
+      }
+      return this.agentById(agent.id) as Agent;
     }
     const id = newId();
-    const name = this.freeName(sanitizeName(opts.preferredName));
-    this.db.run(
-      "INSERT INTO agents (id, name, host, created_at, last_seen, state) VALUES (?, ?, ?, ?, ?, 'live')",
-      [id, name, opts.host, now, now],
-    );
-    this.db.run(
-      "INSERT INTO handles (agent_id, host, key, handle, durability, evidence, attestation, bound_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        id,
-        opts.host,
-        opts.key,
-        JSON.stringify(opts.handle),
-        opts.durability,
-        opts.evidence,
-        opts.attestation ?? "observed",
-        now,
-      ],
-    );
+    this.db.transaction((tx) => {
+      tx.insert(agents)
+        .values({
+          id,
+          name: this.freeName(opts.preferredName),
+          host: opts.host,
+          createdAt: now,
+          lastSeen: now,
+          state: "live",
+          nameSource: "host",
+        })
+        .run();
+      tx.insert(handles)
+        .values({
+          agentId: id,
+          host: opts.host,
+          key: opts.key,
+          handle: JSON.stringify(opts.handle),
+          durability: opts.durability,
+          evidence: opts.evidence,
+          attestation: opts.attestation ?? "observed",
+          boundAt: now,
+        })
+        .run();
+    });
     return this.agentById(id) as Agent;
   }
 
   private freeName(preferred: string, forAgentId?: string): string {
     const taken = (n: string) => {
       const a = this.agentByName(n);
-      return a !== null && a.id !== forAgentId;
+      return a !== undefined && a.id !== forAgentId;
     };
     if (!taken(preferred)) return preferred;
     const m = preferred.match(/^(.*)-(\d+)$/);
@@ -281,203 +212,236 @@ export class Store {
     return `${preferred}-${newId()}`;
   }
 
-  /** Pin a user-chosen name; the host's name no longer overrides it. */
-  rename(agentId: string, name: string): string {
-    const free = this.freeName(name, agentId);
-    this.db.run("UPDATE agents SET name = ?, name_source = 'user' WHERE id = ?", [free, agentId]);
-    return free;
-  }
-
   // ---- presence -----------------------------------------------------------
 
-  presenceOf(agentId: string): Presence | null {
-    return this.db
-      .query<Presence, [string]>("SELECT * FROM presence WHERE agent_id = ?")
-      .get(agentId);
+  presenceOf(agentId: string): Presence | undefined {
+    return this.db.select().from(presence).where(eq(presence.agentId, agentId)).get();
   }
 
   upsertPresence(
     agentId: string,
-    p: Omit<Presence, "agent_id" | "first_seen" | "last_seen">,
+    p: {
+      pid?: number;
+      cwd?: string;
+      status?: string;
+      title?: string;
+      relationship: Relationship;
+      parentKey?: string;
+      reachable: boolean;
+      note?: string;
+      startedAt?: number;
+    },
   ): void {
     const now = Date.now();
-    this.db.run(
-      `INSERT INTO presence (agent_id, pid, tty, cwd, status, title, relationship, parent_key, reachable, note, started_at, first_seen, last_seen)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(agent_id) DO UPDATE SET pid=excluded.pid, tty=excluded.tty, cwd=excluded.cwd, status=excluded.status,
-         title=excluded.title, relationship=excluded.relationship, parent_key=excluded.parent_key, reachable=excluded.reachable,
-         note=excluded.note, started_at=excluded.started_at, last_seen=excluded.last_seen`,
-      [
-        agentId,
-        p.pid,
-        p.tty,
-        p.cwd,
-        p.status,
-        p.title,
-        p.relationship,
-        p.parent_key,
-        p.reachable,
-        p.note,
-        p.started_at,
-        now,
-        now,
-      ],
-    );
-    this.db.run("UPDATE agents SET last_seen = ?, state = 'live' WHERE id = ?", [now, agentId]);
+    const row = {
+      pid: p.pid ?? null,
+      cwd: p.cwd ?? null,
+      status: p.status ?? null,
+      title: p.title ?? null,
+      relationship: p.relationship,
+      parentKey: p.parentKey ?? null,
+      reachable: p.reachable,
+      note: p.note ?? null,
+      startedAt: p.startedAt ?? null,
+      lastSeen: now,
+    };
+    this.db
+      .insert(presence)
+      .values({ agentId, firstSeen: now, ...row })
+      .onConflictDoUpdate({ target: presence.agentId, set: row })
+      .run();
+    this.db
+      .update(agents)
+      .set({ lastSeen: now, state: "live" })
+      .where(eq(agents.id, agentId))
+      .run();
   }
 
   // ---- conversations ------------------------------------------------------
 
+  /** The single DM between two agents, created on first use. */
   dm(a: string, b: string): Conversation {
     const key = `dm:${[a, b].sort().join("+")}`;
-    const found = this.db
-      .query<Conversation, [string]>("SELECT * FROM conversations WHERE key = ?")
-      .get(key);
+    const found = this.db.select().from(conversations).where(eq(conversations.key, key)).get();
     if (found) return found;
     const id = newId();
-    const now = Date.now();
-    this.db.run("INSERT INTO conversations (id, kind, key, created_at) VALUES (?, 'dm', ?, ?)", [
-      id,
-      key,
-      now,
-    ]);
-    for (const agent of [a, b]) {
-      this.db.run("INSERT INTO participants (conversation_id, agent_id) VALUES (?, ?)", [
-        id,
-        agent,
-      ]);
-    }
+    this.db.transaction((tx) => {
+      tx.insert(conversations).values({ id, kind: "dm", key, createdAt: Date.now() }).run();
+      tx.insert(participants)
+        .values([
+          { conversationId: id, agentId: a },
+          { conversationId: id, agentId: b },
+        ])
+        .run();
+    });
     return this.db
-      .query<Conversation, [string]>("SELECT * FROM conversations WHERE id = ?")
-      .get(id) as Conversation;
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, id))
+      .get() as Conversation;
   }
 
   participants(conversationId: string): string[] {
     return this.db
-      .query<{ agent_id: string }, [string]>(
-        "SELECT agent_id FROM participants WHERE conversation_id = ?",
-      )
-      .all(conversationId)
-      .map((r) => r.agent_id);
+      .select({ agentId: participants.agentId })
+      .from(participants)
+      .where(eq(participants.conversationId, conversationId))
+      .all()
+      .map((r) => r.agentId);
   }
 
   // ---- messages & deliveries ---------------------------------------------
 
+  /** Insert a message and one unreceived delivery per other participant. */
   insertMessage(conversationId: string, fromAgentId: string, body: string): Message {
     const id = newId();
     const now = Date.now();
-    const tx = this.db.transaction(() => {
-      this.db.run(
-        "INSERT INTO messages (id, conversation_id, from_agent_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
-        [id, conversationId, fromAgentId, body, now],
-      );
-      for (const to of this.participants(conversationId)) {
-        if (to === fromAgentId) continue;
-        this.db.run("INSERT INTO deliveries (message_id, to_agent_id) VALUES (?, ?)", [id, to]);
+    this.db.transaction((tx) => {
+      tx.insert(messages).values({ id, conversationId, fromAgentId, body, createdAt: now }).run();
+      const recipients = this.participants(conversationId).filter((to) => to !== fromAgentId);
+      if (recipients.length) {
+        tx.insert(deliveries)
+          .values(recipients.map((toAgentId) => ({ messageId: id, toAgentId })))
+          .run();
       }
     });
-    tx();
     return this.messageById(id) as Message;
   }
 
-  messageById(id: string): Message | null {
-    return this.db.query<Message, [string]>("SELECT * FROM messages WHERE id = ?").get(id);
+  messageById(id: string): Message | undefined {
+    return this.db.select().from(messages).where(eq(messages.id, id)).get();
   }
 
+  /** Unreceived messages for an agent, oldest first, optionally in one conversation. */
   inbox(agentId: string, opts: { conversationId?: string; limit: number }): InboxItem[] {
-    const sql = `
-      SELECT m.*, a.name AS from_name, a.host AS from_host
-      FROM deliveries d
-      JOIN messages m ON m.id = d.message_id
-      JOIN agents a ON a.id = m.from_agent_id
-      WHERE d.to_agent_id = ? AND d.received_at IS NULL
-        ${opts.conversationId ? "AND m.conversation_id = ?" : ""}
-      ORDER BY m.seq ASC
-      LIMIT ?`;
-    const params = opts.conversationId
-      ? [agentId, opts.conversationId, opts.limit]
-      : [agentId, opts.limit];
-    return this.db.query<InboxItem, (string | number)[]>(sql).all(...params);
+    const where = [eq(deliveries.toAgentId, agentId), isNull(deliveries.receivedAt)];
+    if (opts.conversationId) where.push(eq(messages.conversationId, opts.conversationId));
+    return this.db
+      .select({
+        seq: messages.seq,
+        id: messages.id,
+        conversationId: messages.conversationId,
+        fromAgentId: messages.fromAgentId,
+        body: messages.body,
+        createdAt: messages.createdAt,
+        fromName: agents.name,
+        fromHost: agents.host,
+      })
+      .from(deliveries)
+      .innerJoin(messages, eq(messages.id, deliveries.messageId))
+      .innerJoin(agents, eq(agents.id, messages.fromAgentId))
+      .where(and(...where))
+      .orderBy(messages.seq)
+      .limit(opts.limit)
+      .all();
   }
 
   countUnreceived(agentId: string, conversationId?: string): number {
-    const sql = `SELECT COUNT(*) AS n FROM deliveries d JOIN messages m ON m.id = d.message_id
-      WHERE d.to_agent_id = ? AND d.received_at IS NULL ${conversationId ? "AND m.conversation_id = ?" : ""}`;
-    const params = conversationId ? [agentId, conversationId] : [agentId];
-    return (this.db.query<{ n: number }, string[]>(sql).get(...params) as { n: number }).n;
+    const where = [eq(deliveries.toAgentId, agentId), isNull(deliveries.receivedAt)];
+    if (conversationId) where.push(eq(messages.conversationId, conversationId));
+    const row = this.db
+      .select({ n: count() })
+      .from(deliveries)
+      .innerJoin(messages, eq(messages.id, deliveries.messageId))
+      .where(and(...where))
+      .get();
+    return row?.n ?? 0;
   }
 
   markReceived(messageIds: string[], agentId: string): void {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      "UPDATE deliveries SET received_at = ? WHERE message_id = ? AND to_agent_id = ? AND received_at IS NULL",
-    );
-    const tx = this.db.transaction(() => {
-      for (const id of messageIds) stmt.run(now, id, agentId);
-    });
-    tx();
+    if (!messageIds.length) return;
+    this.db
+      .update(deliveries)
+      .set({ receivedAt: Date.now() })
+      .where(
+        and(
+          inArray(deliveries.messageId, messageIds),
+          eq(deliveries.toAgentId, agentId),
+          isNull(deliveries.receivedAt),
+        ),
+      )
+      .run();
   }
 
-  recordWake(messageId: string, agentId: string, provider: string, result: string): void {
-    this.db.run(
-      "UPDATE deliveries SET wake_provider = ?, wake_attempted_at = ?, wake_result = ? WHERE message_id = ? AND to_agent_id = ?",
-      [provider, Date.now(), result, messageId, agentId],
-    );
+  recordWake(
+    messageId: string,
+    agentId: string,
+    provider: string,
+    outcome: DeliveryOutcome,
+    detail?: string,
+  ): void {
+    this.db
+      .update(deliveries)
+      .set({
+        wakeProvider: provider,
+        wakeAttemptedAt: Date.now(),
+        wakeResult: outcome,
+        wakeDetail: detail ?? null,
+      })
+      .where(and(eq(deliveries.messageId, messageId), eq(deliveries.toAgentId, agentId)))
+      .run();
   }
 
+  /** Messages in a conversation from one sender with seq greater than `afterSeq`. */
   repliesAfter(conversationId: string, fromAgentId: string, afterSeq: number): Message[] {
     return this.db
-      .query<Message, [string, string, number]>(
-        "SELECT * FROM messages WHERE conversation_id = ? AND from_agent_id = ? AND seq > ? ORDER BY seq ASC",
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.fromAgentId, fromAgentId),
+          gt(messages.seq, afterSeq),
+        ),
       )
-      .all(conversationId, fromAgentId, afterSeq);
+      .orderBy(messages.seq)
+      .all();
   }
 
   // ---- guards support -----------------------------------------------------
 
   identicalRecently(conversationId: string, fromAgentId: string, body: string, sinceMs: number) {
-    return (
-      this.db
-        .query<{ n: number }, [string, string, string, number]>(
-          "SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND from_agent_id = ? AND body = ? AND created_at > ?",
-        )
-        .get(conversationId, fromAgentId, body, Date.now() - sinceMs)?.n ?? 0
-    );
+    const row = this.db
+      .select({ n: count() })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.fromAgentId, fromAgentId),
+          eq(messages.body, body),
+          gt(messages.createdAt, Date.now() - sinceMs),
+        ),
+      )
+      .get();
+    return row?.n ?? 0;
   }
 
   sendsSince(fromAgentId: string, sinceMs: number): number {
-    return (
-      this.db
-        .query<{ n: number }, [string, number]>(
-          "SELECT COUNT(*) AS n FROM messages WHERE from_agent_id = ? AND created_at > ?",
-        )
-        .get(fromAgentId, Date.now() - sinceMs)?.n ?? 0
-    );
+    const row = this.db
+      .select({ n: count() })
+      .from(messages)
+      .where(
+        and(eq(messages.fromAgentId, fromAgentId), gt(messages.createdAt, Date.now() - sinceMs)),
+      )
+      .get();
+    return row?.n ?? 0;
   }
 
   // ---- log ----------------------------------------------------------------
 
-  log(conversationId?: string): Array<
-    Message & {
-      from_name: string;
-      to_name: string;
-      wake_provider: string | null;
-      wake_result: string | null;
-      received_at: number | null;
-    }
-  > {
-    const sql = `
-      SELECT m.*, fa.name AS from_name, ta.name AS to_name,
-             d.wake_provider, d.wake_result, d.received_at
+  /** Every message with its delivery state. Raw SQL: it joins `agents` twice. */
+  log(conversationId?: string): LogRow[] {
+    return this.db.all<LogRow>(sql`
+      SELECT m.seq, m.id, m.conversation_id AS conversationId, m.from_agent_id AS fromAgentId,
+             m.body, m.created_at AS createdAt,
+             fa.name AS fromName, ta.name AS toName,
+             d.wake_provider AS wakeProvider, d.wake_result AS wakeResult,
+             d.wake_detail AS wakeDetail, d.received_at AS receivedAt
       FROM messages m
       JOIN agents fa ON fa.id = m.from_agent_id
       JOIN deliveries d ON d.message_id = m.id
       JOIN agents ta ON ta.id = d.to_agent_id
-      ${conversationId ? "WHERE m.conversation_id = ?" : ""}
-      ORDER BY m.seq ASC`;
-    type Row = ReturnType<Store["log"]>[number];
-    return conversationId
-      ? this.db.query<Row, [string]>(sql).all(conversationId)
-      : this.db.query<Row, []>(sql).all();
+      ${conversationId ? sql`WHERE m.conversation_id = ${conversationId}` : sql``}
+      ORDER BY m.seq ASC`);
   }
 }

@@ -2,9 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { rpc } from "./client.ts";
-import type { Agent, InboxItem } from "./core/store.ts";
+import type { InboxItem } from "./core/store.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { whoAmI } from "./identity.ts";
+import { renderItem } from "./render.ts";
+import type { RosterEntry } from "./tracker.ts";
 
 /**
  * The stdio shim: an MCP server a host spawns per session. It asks the adapters who
@@ -13,16 +15,15 @@ import { whoAmI } from "./identity.ts";
  * Nothing host-specific lives here.
  */
 
-export function renderItem(i: InboxItem): string {
-  const [first = "", ...rest] = i.body.split("\n");
-  return [`${i.from_name}: ${first}`, ...rest.map((l) => `  ${l}`)].join("\n");
-}
+const text = (t: string, isError = false) => ({
+  content: [{ type: "text" as const, text: t }],
+  isError,
+});
 
 export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   await ensureDaemon();
   const { identity, label, attach } = await whoAmI();
-  const bound = await rpc<{ agent: Agent }>("bind", {}, identity);
-  const me = bound.agent.name;
+  const me = (await rpc<{ agent: { name: string } }>("bind", {}, identity)).agent.name;
   // Hand the daemon whatever our adapter says it needs to reach this session.
   if (attach) await rpc("attach", attach, identity).catch(() => undefined);
 
@@ -45,21 +46,17 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
     },
     async ({ to, body, wait }) => {
       try {
-        const r = await rpc<{ to: Agent; wakeResult: string; reply?: InboxItem }>(
-          "send",
-          { to, body, wait },
-          identity,
-        );
-        let text = `sent to ${r.to.name}`;
-        if (r.wakeResult.startsWith("error") || r.wakeResult === "none")
-          text += ` (delivery: ${r.wakeResult})`;
-        if (wait) text += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
-        return { content: [{ type: "text", text }] };
+        const r = await rpc<{
+          to: { name: string };
+          delivery: { outcome: string; detail?: string };
+          reply?: InboxItem;
+        }>("send", { to, body, wait }, identity);
+        const bad = r.delivery.outcome === "error" || r.delivery.outcome === "unavailable";
+        let out = `sent to ${r.to.name}${bad ? ` (${r.delivery.outcome}: ${r.delivery.detail})` : ""}`;
+        if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
+        return text(out);
       } catch (e) {
-        return {
-          content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-          isError: true,
-        };
+        return text(e instanceof Error ? e.message : String(e), true);
       }
     },
   );
@@ -71,23 +68,11 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
-      const r = await rpc<{
-        agents: Array<{
-          name: string;
-          host: string;
-          cwd?: string;
-          reachable: boolean;
-          note?: string;
-        }>;
-      }>("who", { filter });
+      const r = await rpc<{ agents: RosterEntry[] }>("who", { filter });
       const lines = r.agents
         .filter((a) => a.name !== me && (filter || a.reachable))
         .map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
-      return {
-        content: [
-          { type: "text", text: lines.length ? lines.join("\n") : "nobody else is on the bus" },
-        ],
-      };
+      return text(lines.length ? lines.join("\n") : "nobody else is on the bus");
     },
   );
 
@@ -110,7 +95,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
         const lines = r.items.map(renderItem);
         if (r.more) lines.push(`[${r.more} more; call sync again]`);
         if (r.moreElsewhere) lines.push(`[${r.moreElsewhere} unread in other DMs]`);
-        return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "nothing" }] };
+        return text(lines.length ? lines.join("\n") : "nothing");
       },
     );
   }

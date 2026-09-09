@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { DeliveryResult } from "./delivery.ts";
 import { GUARDS } from "./guards.ts";
 import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
@@ -6,7 +7,7 @@ import type { Agent, InboxItem, Message, Store } from "./store.ts";
  * The bus API: the same handlers serve the CLI, the MCP shim, and any adapter.
  * Identity (`agentId`) is always resolved by the caller layer; the API never trusts
  * a name in params. Delivery is delegated through `deliver`, supplied by the daemon
- * (the tracker), so the API knows nothing about hosts. See docs/poc-spec.md 4.
+ * (the tracker), so the API knows nothing about hosts.
  */
 
 export type Deliver = (
@@ -14,14 +15,20 @@ export type Deliver = (
   text: string,
   marker: string,
   onReceipt: () => void,
-) => Promise<string>;
+) => Promise<DeliveryResult>;
 
 export class ApiError extends Error {}
 
+interface MessageEvent {
+  conversationId: string;
+  toIds: string[];
+  message: Message;
+}
+
 export class Api {
   private readonly events = new EventEmitter();
-  private deliver: Deliver = async () => "none";
-  /** conversation:replier pairs someone is currently waiting on inline. */
+  private deliver: Deliver = async () => ({ outcome: "waiting" });
+  /** conversation:replier pairs someone is currently blocked on inline. */
   private readonly waiting = new Set<string>();
 
   constructor(readonly store: Store) {
@@ -45,7 +52,7 @@ export class Api {
     to: string;
     body: string;
     wait?: number;
-  }): Promise<{ message: Message; to: Agent; wakeResult: string; reply?: InboxItem }> {
+  }): Promise<{ message: Message; to: Agent; delivery: DeliveryResult; reply?: InboxItem }> {
     const from = this.store.agentById(opts.fromId);
     if (!from) throw new ApiError("sender is not a known agent");
     const to = this.resolveName(opts.to);
@@ -65,21 +72,20 @@ export class Api {
     this.store.touch(from.id);
     this.events.emit("message", { conversationId: conv.id, toIds: [to.id], message });
 
-    // If the recipient is blocked in send(wait) for a reply from this sender, the
-    // reply is returned through that pending call instead of being pushed into
-    // the host as well (it would otherwise arrive twice).
-    const wakeResult = this.waiting.has(`${conv.id}:${from.id}`)
-      ? "returned-to-waiter"
+    // A reply someone is blocked on inline is returned through that call, not also
+    // pushed into their host (it would arrive twice).
+    const delivery: DeliveryResult = this.waiting.has(`${conv.id}:${from.id}`)
+      ? { outcome: "returned-to-waiter" }
       : await this.deliver(to, this.render(message, from), `#${message.id}`, () =>
           this.store.markReceived([message.id], to.id),
         );
-    this.store.recordWake(message.id, to.id, to.host, wakeResult);
+    this.store.recordWake(message.id, to.id, to.host, delivery.outcome, delivery.detail);
 
-    let reply: InboxItem | undefined;
-    if (opts.wait && opts.wait > 0) {
-      reply = await this.waitForReply(from.id, to, conv.id, message.seq, opts.wait);
-    }
-    return { message, to, wakeResult, reply };
+    const reply =
+      opts.wait && opts.wait > 0
+        ? await this.waitForReply(from.id, to, conv.id, message.seq, opts.wait)
+        : undefined;
+    return { message, to, delivery, reply };
   }
 
   /** Text handed to a host when a message is queued into it: one line of attribution. */
@@ -87,41 +93,32 @@ export class Api {
     return `[modelbus #${message.id}] from ${from.name}\n\n${message.body}`;
   }
 
-  private waitForReply(
+  private async waitForReply(
     meId: string,
     from: Agent,
     conversationId: string,
     afterSeq: number,
     waitSeconds: number,
   ): Promise<InboxItem | undefined> {
-    const deadline = Math.min(waitSeconds, GUARDS.MAX_WAIT_SECONDS) * 1000;
     const take = (): InboxItem | undefined => {
       const [m] = this.store.repliesAfter(conversationId, from.id, afterSeq);
       if (!m) return undefined;
       this.store.markReceived([m.id], meId);
-      return { ...m, from_name: from.name, from_host: from.host };
+      return { ...m, fromName: from.name, fromHost: from.host };
     };
     const first = take();
-    if (first) return Promise.resolve(first);
-    const waitKey = `${conversationId}:${from.id}`;
-    this.waiting.add(waitKey);
-    return new Promise((resolve) => {
-      const onMessage = (ev: { conversationId: string; message: Message }) => {
-        if (ev.conversationId !== conversationId || ev.message.from_agent_id !== from.id) return;
-        cleanup();
-        resolve(take());
-      };
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve(undefined);
-      }, deadline);
-      const cleanup = () => {
-        clearTimeout(timer);
-        this.waiting.delete(waitKey);
-        this.events.off("message", onMessage);
-      };
-      this.events.on("message", onMessage);
-    });
+    if (first) return first;
+    const key = `${conversationId}:${from.id}`;
+    this.waiting.add(key);
+    try {
+      await this.awaitEvent(
+        (ev) => ev.conversationId === conversationId && ev.message.fromAgentId === from.id,
+        waitSeconds,
+      );
+    } finally {
+      this.waiting.delete(key);
+    }
+    return take();
   }
 
   // ---- pull (sync) --------------------------------------------------------
@@ -136,34 +133,41 @@ export class Api {
     if (!me) throw new ApiError("unknown agent");
     this.store.touch(me.id);
     const limit = Math.min(opts.limit ?? GUARDS.PULL_LIMIT, GUARDS.PULL_LIMIT);
-    let conversationId: string | undefined;
-    if (opts.scope) conversationId = this.store.dm(me.id, this.resolveName(opts.scope).id).id;
+    const conversationId = opts.scope
+      ? this.store.dm(me.id, this.resolveName(opts.scope).id).id
+      : undefined;
 
     const take = () => {
       const items = this.store.inbox(me.id, { conversationId, limit });
-      if (items.length)
-        this.store.markReceived(
-          items.map((i) => i.id),
-          me.id,
-        );
+      this.store.markReceived(
+        items.map((i) => i.id),
+        me.id,
+      );
       const more = this.store.countUnreceived(me.id, conversationId);
       const moreElsewhere = conversationId ? this.store.countUnreceived(me.id) - more : 0;
       return { items, more, moreElsewhere };
     };
     const first = take();
     if (first.items.length || !opts.wait) return first;
+    await this.awaitEvent(
+      (ev) => ev.toIds.includes(me.id) && (!conversationId || ev.conversationId === conversationId),
+      opts.wait,
+    );
+    return take();
+  }
 
-    const deadline = Math.min(opts.wait, GUARDS.MAX_WAIT_SECONDS) * 1000;
+  /** Resolve when a matching message event fires or the wait elapses. */
+  private awaitEvent(match: (ev: MessageEvent) => boolean, waitSeconds: number): Promise<void> {
+    const deadline = Math.min(waitSeconds, GUARDS.MAX_WAIT_SECONDS) * 1000;
     return new Promise((resolve) => {
-      const onMessage = (ev: { conversationId: string; toIds: string[] }) => {
-        if (!ev.toIds.includes(me.id)) return;
-        if (conversationId && ev.conversationId !== conversationId) return;
+      const onMessage = (ev: MessageEvent) => {
+        if (!match(ev)) return;
         cleanup();
-        resolve(take());
+        resolve();
       };
       const timer = setTimeout(() => {
         cleanup();
-        resolve(take());
+        resolve();
       }, deadline);
       const cleanup = () => {
         clearTimeout(timer);
@@ -176,10 +180,10 @@ export class Api {
   // ---- log ----------------------------------------------------------------
 
   log(opts: { a?: string; b?: string }) {
-    let conversationId: string | undefined;
-    if (opts.a && opts.b) {
-      conversationId = this.store.dm(this.resolveName(opts.a).id, this.resolveName(opts.b).id).id;
-    }
+    const conversationId =
+      opts.a && opts.b
+        ? this.store.dm(this.resolveName(opts.a).id, this.resolveName(opts.b).id).id
+        : undefined;
     return this.store.log(conversationId);
   }
 }

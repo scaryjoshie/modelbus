@@ -1,26 +1,42 @@
 # modelbus
 
-Local message bus for coding agents. Design phase; no code yet.
+Local message bus between the AI agents on one machine. TypeScript on Bun.
 
 ## Read this first
 
-`docs/poc-spec.md` is the current POC proposal (DM-only, no UI). It is more concrete
-than the notes but still not settled; items marked OPEN are undecided.
+`docs/poc-spec.md` is the current POC spec (DM-only, no UI). `docs/design-notes.md` is
+an exploratory draft, not a spec: items marked OPEN are undecided. Before implementing
+anything that touches an OPEN item, or making a design choice the docs don't settle,
+**ask Joshua**. Do not resolve open questions on your own.
 
-`docs/design-notes.md` is an **exploratory draft**, not a spec. It records ideas from
-design conversations, many unfinished, with items marked OPEN and LEANING. Do not treat
-it as decisions. Before implementing anything that touches an OPEN item, or before
-making a design choice the notes don't clearly settle, **ask Joshua**. Do not resolve
-open questions on your own.
+## Layout and the layering rule
 
-`docs/host-adapter-inventory-and-bus-design.md` is an external research report on
-per-host integration mechanisms and prior art. Some of its claims are flagged as
-unverified inside the doc itself.
+Core is what would exist with zero known hosts. `scripts/check-layers.ts` enforces it.
 
-## Conventions (current leaning, confirm before relying on them)
+| Layer | Files | May import from |
+|---|---|---|
+| core | `src/core/*` (store, api, guards, adapter interface, schema, delivery, paths) | core only |
+| helpers | `src/util/*` (process table, transcript watcher) | util only |
+| adapters | `src/adapters/*`, one file per host, plus self-registration | core, util |
+| clients | `src/cli.ts`, `src/mcp.ts`, `src/identity.ts`, `src/client.ts`, `src/ensure.ts` | anything |
+| composition root | `src/daemon.ts`, `src/tracker.ts` | anything |
 
-- TypeScript on Bun. `strict: true`, ESM only, Biome for format and lint, zod at
-  boundaries. Otherwise idiomatic TypeScript.
-- Keep code legible to someone coming from Python. No clever generics.
-- Tool surface for agents must stay tiny; context cost matters more than features.
+Adapters are the only place a host's name may appear. Host-specific CLI verbs are
+contributed by adapters through `commands()`, never written into `cli.ts`.
+
+## Conventions
+
+Follow the TypeScript handbook's Do's and Don'ts, the Google TypeScript style guide,
+and Effective TypeScript. Concretely, in this repo:
+
+- `strict`, ESM only, Biome for format and lint (`bun run check` runs everything).
+- Validate at the edges with zod (RPC params, host files); trust types inside.
+- Results are typed unions, never strings: see `DeliveryResult`. Errors are thrown
+  `ApiError` (caller's fault) or plain `Error` (ours).
+- No `any`, no non-null assertions, no dynamic `import()` to dodge cycles.
+- Small files with one responsibility. Classes only for things that hold state.
+- The store is the only module that touches SQL. Schema lives in `src/core/schema.ts`;
+  change it, then `bun run migrate:generate`, and commit the migration.
+- Tool surface for agents stays tiny; context cost matters more than features.
 - Nothing may move the mouse, click, steal focus, or raise a window on the user's screen.
+- Models never poll. The bus delivers; `sync` exists only as an explicit catch-up.

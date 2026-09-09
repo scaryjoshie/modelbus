@@ -1,4 +1,4 @@
-import { socketPath } from "./daemon.ts";
+import { socketPath } from "./core/paths.ts";
 
 /** Minimal RPC client over the daemon's unix socket. */
 

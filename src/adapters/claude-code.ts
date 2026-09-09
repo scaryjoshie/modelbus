@@ -4,8 +4,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import { z } from "zod";
-import type { ConfigurePlan, HostAdapter, Observation, SelfIdentity } from "../core/adapter.ts";
-import { cliPath } from "../ensure.ts";
+import type {
+  Command,
+  CommandContext,
+  ConfigurePlan,
+  HostAdapter,
+  Observation,
+  SelfIdentity,
+} from "../core/adapter.ts";
+import { type DeliveryResult, delivered, unavailable } from "../core/delivery.ts";
+import { cliPath } from "../core/paths.ts";
 import { ancestors, isAlive, listProcesses } from "../util/ps.ts";
 import { fileOffset, watchTranscript } from "../util/watch.ts";
 
@@ -155,14 +163,19 @@ export class ClaudeCodeAdapter implements HostAdapter {
     });
   }
 
-  async deliver(handle: unknown, text: string, marker: string, onReceipt: () => void) {
+  async deliver(
+    handle: unknown,
+    text: string,
+    marker: string,
+    onReceipt: () => void,
+  ): Promise<DeliveryResult> {
     const h = handle as Handle;
     const a = this.attached.get(h.sessionId) ?? {};
     const reg = liveSessions().find((s) => s.sessionId === h.sessionId);
     const socketPath = a.socketPath ?? reg?.socketPath;
     const transcriptPath = a.transcriptPath ?? reg?.transcriptPath;
-    if (!socketPath) return "no-socket";
-    if (!existsSync(socketPath)) return "socket-missing";
+    if (!socketPath) return unavailable("no inbox socket");
+    if (!existsSync(socketPath)) return unavailable("inbox socket missing");
     const fromOffset = transcriptPath ? fileOffset(transcriptPath) : 0;
     await postViaHelper(socketPath, a.token, text);
     if (transcriptPath) {
@@ -174,7 +187,66 @@ export class ClaudeCodeAdapter implements HostAdapter {
         onFound: onReceipt,
       });
     }
-    return a.token ? "posted" : "posted-unattested";
+    return a.token ? delivered("inbox socket, token") : { outcome: "delivered-unattested" };
+  }
+
+  /** CLI verbs this host needs. None of them import the client layer. */
+  commands(): Record<string, Command> {
+    const attach = async (
+      ctx: CommandContext,
+      hint: { session_id?: string; transcript_path?: string },
+    ) => {
+      const me = await this.identifySelf();
+      if (!me) throw new Error("not inside a Claude Code session");
+      if (!me.attach) throw new Error("no CLAUDE_CODE_MESSAGING_SOCKET in this environment");
+      await ctx.ensureDaemon();
+      const identity = {
+        kind: "self",
+        host: me.host,
+        key: hint.session_id ?? me.key,
+        name: me.name,
+        evidence: `hook/attach ${me.evidence}`,
+      };
+      const r = await ctx.rpc<{ agent: { name: string } }>(
+        "attach",
+        { ...me.attach, transcriptPath: hint.transcript_path ?? me.attach.transcriptPath },
+        identity,
+      );
+      return r.agent.name;
+    };
+    return {
+      hook: {
+        usage: "hook claude-session-start              SessionStart hook entry (stdin JSON)",
+        run: async (ctx) => {
+          let input: { session_id?: string; transcript_path?: string } = {};
+          try {
+            input = JSON.parse(await ctx.stdin());
+          } catch {
+            /* run by hand with no stdin */
+          }
+          const name = await attach(ctx, input);
+          // Hook stdout is added to the session's context.
+          console.log(`modelbus: this session is registered as "${name}".`);
+        },
+      },
+      attach: {
+        usage:
+          "attach                                 register the Claude Code session this runs inside",
+        run: async (ctx) => console.log(`attached as "${await attach(ctx, {})}"`),
+      },
+      post: {
+        usage:
+          "post                                   (internal) write stdin JSON to an inbox socket",
+        run: async (ctx) => {
+          const p = JSON.parse(await ctx.stdin()) as {
+            socketPath: string;
+            token?: string;
+            text: string;
+          };
+          await post(p.socketPath, p.token, p.text);
+        },
+      },
+    };
   }
 
   configure(): ConfigurePlan {
@@ -191,24 +263,22 @@ export class ClaudeCodeAdapter implements HostAdapter {
       ],
       apply: async () => {
         const done: string[] = [];
-        const settings = existsSync(settingsPath)
-          ? (JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>)
-          : {};
-        const permissions = (settings.permissions ??= {}) as { allow?: string[] };
-        permissions.allow ??= [];
-        if (!permissions.allow.includes(allowRule)) {
-          permissions.allow.push(allowRule);
+        type Hook = { hooks: Array<{ type: string; command?: string }> };
+        const settings = (
+          existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf8")) : {}
+        ) as { permissions?: { allow?: string[] }; hooks?: Record<string, Hook[]> };
+        const allow = settings.permissions?.allow ?? [];
+        if (!allow.includes(allowRule)) {
+          allow.push(allowRule);
           done.push(`added permission allow ${allowRule}`);
         }
-        const hooks = (settings.hooks ??= {}) as Record<
-          string,
-          Array<{ hooks: Array<{ type: string; command?: string }> }>
-        >;
-        hooks.SessionStart ??= [];
-        if (!hooks.SessionStart.some((g) => g.hooks?.some((h) => h.command === hookCommand))) {
-          hooks.SessionStart.push({ hooks: [{ type: "command", command: hookCommand }] });
+        settings.permissions = { ...settings.permissions, allow };
+        const sessionStart = settings.hooks?.SessionStart ?? [];
+        if (!sessionStart.some((g) => g.hooks?.some((h) => h.command === hookCommand))) {
+          sessionStart.push({ hooks: [{ type: "command", command: hookCommand }] });
           done.push("added SessionStart hook");
         }
+        settings.hooks = { ...settings.hooks, SessionStart: sessionStart };
         writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
         const [cmd, ...args] = mcpAdd;
         const r = await $`${cmd} ${args}`.quiet().nothrow();
@@ -219,42 +289,6 @@ export class ClaudeCodeAdapter implements HostAdapter {
       },
     };
   }
-}
-
-/** SessionStart hook entry: stdin carries the hook JSON. Returns the agent name. */
-export async function hookSessionStart(stdinJson: string): Promise<string> {
-  let input: { session_id?: string; transcript_path?: string } = {};
-  try {
-    input = JSON.parse(stdinJson);
-  } catch {
-    /* run by hand with no stdin */
-  }
-  return attachCurrentSession(input);
-}
-
-/** Register the Claude Code session this process runs inside (needs the session's env). */
-export async function attachCurrentSession(
-  hint: { session_id?: string; transcript_path?: string } = {},
-): Promise<string> {
-  const { ensureDaemon } = await import("../ensure.ts");
-  const { rpc } = await import("../client.ts");
-  const me = await new ClaudeCodeAdapter().identifySelf();
-  if (!me) throw new Error("not inside a Claude Code session");
-  if (!me.attach) throw new Error("no CLAUDE_CODE_MESSAGING_SOCKET in this environment");
-  await ensureDaemon();
-  const identity = {
-    kind: "self" as const,
-    host: me.host,
-    key: hint.session_id ?? me.key,
-    name: me.name,
-    evidence: `hook/attach ${me.evidence}`,
-  };
-  const r = await rpc<{ agent: { name: string } }>(
-    "attach",
-    { ...me.attach, transcriptPath: hint.transcript_path ?? me.attach.transcriptPath },
-    identity,
-  );
-  return r.agent.name;
 }
 
 function isDelivered(line: string): boolean {
@@ -282,8 +316,8 @@ async function postViaHelper(socketPath: string, token: string | undefined, text
   }
 }
 
-/** Direct post from this process. Used by the `modelbus post` helper only. */
-export function post(socketPath: string, token: string | undefined, text: string): Promise<void> {
+/** Direct post from this process. Used by the `post` command only. */
+function post(socketPath: string, token: string | undefined, text: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const sock = createConnection({ path: socketPath });
     sock.setTimeout(5000);

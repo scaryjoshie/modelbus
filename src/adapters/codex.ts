@@ -4,7 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
 import type { ConfigurePlan, HostAdapter, Observation, SelfIdentity } from "../core/adapter.ts";
-import { cliPath } from "../ensure.ts";
+import { type DeliveryResult, delivered, failed } from "../core/delivery.ts";
+import { cliPath } from "../core/paths.ts";
 import { ancestors, cwdOf, listProcesses } from "../util/ps.ts";
 import { fileOffset, watchTranscript } from "../util/watch.ts";
 
@@ -202,7 +203,12 @@ export class CodexAdapter implements HostAdapter {
     return null;
   }
 
-  async deliver(handle: unknown, text: string, marker: string, onReceipt: () => void) {
+  async deliver(
+    handle: unknown,
+    text: string,
+    marker: string,
+    onReceipt: () => void,
+  ): Promise<DeliveryResult> {
     const h = handle as Handle;
     const meta = threadMeta(h.threadId);
     const fromOffset = meta.rolloutPath ? fileOffset(meta.rolloutPath) : 0;
@@ -212,7 +218,7 @@ export class CodexAdapter implements HostAdapter {
     });
     if ((await proc.exited) !== 0) {
       const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
-      return `error: codex queue failed${err ? `: ${err}` : ""}`;
+      return failed(`codex queue: ${err || "failed"}`);
     }
     if (meta.rolloutPath) {
       watchTranscript({
@@ -223,7 +229,7 @@ export class CodexAdapter implements HostAdapter {
         onFound: onReceipt,
       });
     }
-    return "queued";
+    return delivered("codex queue");
   }
 
   configure(): ConfigurePlan {

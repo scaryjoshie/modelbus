@@ -1,3 +1,5 @@
+import type { DeliveryResult } from "./delivery.ts";
+
 /**
  * The boundary between the host-agnostic core and each host.
  *
@@ -49,6 +51,19 @@ export interface ConfigurePlan {
   apply(): Promise<string[]>;
 }
 
+/** Facilities a CLI command contributed by an adapter may use. */
+export interface CommandContext {
+  args: string[];
+  stdin(): Promise<string>;
+  rpc<T>(method: string, params: Record<string, unknown>, identity?: unknown): Promise<T>;
+  ensureDaemon(): Promise<void>;
+}
+
+export interface Command {
+  usage: string;
+  run(ctx: CommandContext): Promise<void>;
+}
+
 export interface HostAdapter {
   readonly host: string;
   /** Everything live on this host right now. Must not throw; return [] instead. */
@@ -57,10 +72,17 @@ export interface HostAdapter {
   handleFromKey(key: string): unknown;
   /** Inside a process the host spawned: which of its sessions is this? Null if not this host. */
   identifySelf?(): Promise<SelfIdentity | null>;
-  /** Put `text` into the session. Returns a short result word; calls onReceipt if it can observe reading. */
-  deliver?(handle: unknown, text: string, marker: string, onReceipt: () => void): Promise<string>;
+  /** Put `text` into the session; call onReceipt later if the adapter can observe it being read. */
+  deliver?(
+    handle: unknown,
+    text: string,
+    marker: string,
+    onReceipt: () => void,
+  ): Promise<DeliveryResult>;
   /** Accept runtime information a session hands over about itself (secrets stay here). */
   attach?(handle: unknown, info: Record<string, unknown>): void;
   /** What `init` writes for this host. */
   configure?(): ConfigurePlan;
+  /** CLI verbs this host needs (e.g. a hook entry point). */
+  commands?(): Record<string, Command>;
 }

@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { HostAdapter, Observation } from "../core/adapter.ts";
+import { type DeliveryResult, delivered, failed } from "../core/delivery.ts";
 import type { Store } from "../core/store.ts";
 import { isAlive } from "../util/ps.ts";
 
@@ -48,16 +49,12 @@ export class RegisteredAdapter implements HostAdapter {
       attestation: "attested",
     });
     this.store.upsertPresence(agent.id, {
-      pid: opts.pid ?? null,
-      tty: null,
-      cwd: null,
-      status: null,
-      title: opts.hostLabel ?? null,
+      pid: opts.pid,
+      title: opts.hostLabel,
       relationship: "top-level",
-      parent_key: null,
-      reachable: 1,
+      reachable: true,
       note: opts.deliver ? "delivered by running its command" : "pull: delivered on its next sync",
-      started_at: Date.now(),
+      startedAt: Date.now(),
     });
     return { agent, token };
   }
@@ -97,9 +94,14 @@ export class RegisteredAdapter implements HostAdapter {
     return existing ? (JSON.parse(existing.handle) as RegisteredHandle) : { token: key };
   }
 
-  async deliver(handle: unknown, text: string, _marker: string, onReceipt: () => void) {
+  async deliver(
+    handle: unknown,
+    text: string,
+    _marker: string,
+    onReceipt: () => void,
+  ): Promise<DeliveryResult> {
     const h = handle as RegisteredHandle;
-    if (!h.deliver) return "waiting-for-pull";
+    if (!h.deliver) return { outcome: "waiting", detail: "pull" };
     const proc = Bun.spawn(["/bin/sh", "-c", h.deliver], {
       stdin: "pipe",
       stdout: "pipe",
@@ -110,9 +112,9 @@ export class RegisteredAdapter implements HostAdapter {
     const code = await proc.exited;
     if (code !== 0) {
       const err = (await new Response(proc.stderr).text()).trim();
-      return `error: deliver command exit ${code}${err ? `: ${err.split("\n")[0]}` : ""}`;
+      return failed(`deliver command exit ${code}${err ? `: ${err.split("\n")[0]}` : ""}`);
     }
     onReceipt();
-    return "delivered";
+    return delivered("command");
   }
 }

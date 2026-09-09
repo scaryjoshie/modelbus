@@ -3,7 +3,8 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ConfigurePlan, HostAdapter, Observation } from "../core/adapter.ts";
-import { cliPath } from "../ensure.ts";
+import { type DeliveryResult, delivered, failed, unavailable } from "../core/delivery.ts";
+import { cliPath } from "../core/paths.ts";
 import { fileOffset, watchTranscript } from "../util/watch.ts";
 
 /**
@@ -118,12 +119,17 @@ export class AsideAdapter implements HostAdapter {
     return { sessionId: key, account: -1 };
   }
 
-  async deliver(handle: unknown, text: string, marker: string, onReceipt: () => void) {
+  async deliver(
+    handle: unknown,
+    text: string,
+    marker: string,
+    onReceipt: () => void,
+  ): Promise<DeliveryResult> {
     const h = handle as Handle;
     const account =
       h.account >= 0 ? h.account : accounts().find((a) => transcriptPath(a, h.sessionId));
-    if (account === undefined) return "error: account for session not found";
-    if (!existsSync(asideCli())) return "error: aside cli not installed";
+    if (account === undefined) return unavailable("account for session not found");
+    if (!existsSync(asideCli())) return unavailable("aside cli not installed");
     const path = transcriptPath(account, h.sessionId);
     const fromOffset = path ? fileOffset(path) : 0;
     const proc = Bun.spawn(
@@ -132,11 +138,11 @@ export class AsideAdapter implements HostAdapter {
     );
     if ((await proc.exited) !== 0) {
       const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
-      return `error: aside session queue failed${err ? `: ${err}` : ""}`;
+      return failed(`aside session queue: ${err || "failed"}`);
     }
     if (path)
       watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onReceipt });
-    return "queued";
+    return delivered("aside session queue");
   }
 
   configure(): ConfigurePlan {
@@ -184,13 +190,15 @@ export class AsideAdapter implements HostAdapter {
         const done: string[] = [];
         for (const a of accounts()) {
           const path = join(usersDir(), String(a), "settings.json");
-          const s = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-          const mcp = (s.mcp ??= {}) as {
-            servers?: Record<string, unknown>;
-            inventories?: Record<string, unknown>;
+          const s = JSON.parse(readFileSync(path, "utf8")) as {
+            mcp?: { servers?: Record<string, unknown>; inventories?: Record<string, unknown> };
           };
-          (mcp.servers ??= {}).modelbus = entry(a);
-          (mcp.inventories ??= {}).modelbus = inventory;
+          const mcp = s.mcp ?? {};
+          s.mcp = {
+            ...mcp,
+            servers: { ...mcp.servers, modelbus: entry(a) },
+            inventories: { ...mcp.inventories, modelbus: inventory },
+          };
           writeFileSync(path, `${JSON.stringify(s, null, 2)}\n`);
           done.push(`aside u/${a}: wrote mcp.servers.modelbus + inventory`);
         }

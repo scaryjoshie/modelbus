@@ -18,7 +18,7 @@ class FakeHost implements HostAdapter {
   async deliver(handle: unknown, text: string, _marker: string, onReceipt: () => void) {
     this.delivered.push({ handle, text });
     onReceipt();
-    return "queued";
+    return { outcome: "delivered" as const };
   }
 }
 
@@ -97,7 +97,7 @@ describe("tracker", () => {
     const result = await t.deliver(agent, "hello", "#m1", () => {
       receipt = true;
     });
-    expect(result).toBe("queued");
+    expect(result.outcome).toBe("delivered");
     expect(receipt).toBe(true);
     expect(host.delivered[0]?.handle).toEqual({ opaque: "k1", nested: { thing: true } });
   });

@@ -1,12 +1,7 @@
 import { existsSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonUnreachable, rpc } from "./client.ts";
-import { modelbusHome, socketPath } from "./daemon.ts";
-
-/** Path of this CLI entry, for spawning ourselves. */
-export function cliPath(): string {
-  return join(import.meta.dir, "cli.ts");
-}
+import { cliPath, modelbusHome, socketPath } from "./core/paths.ts";
 
 /** Start the daemon detached if it isn't answering, then wait for it. */
 export async function ensureDaemon(): Promise<void> {

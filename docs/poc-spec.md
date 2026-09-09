@@ -153,6 +153,19 @@ the first turn, hence the follow-the-host naming policy.
 - All three hosts now complete inbound delivery and outbound reply with no per-message
   interaction. Remaining one-time steps are `init --write` and host restarts.
 
+### Cleanup pass (2026-09-08)
+
+- Store on Drizzle with generated migrations (`drizzle/`); schema in
+  `src/core/schema.ts`. The `Store` interface is the only SQL boundary.
+- `DeliveryResult` is a typed union (delivered, delivered-unattested, waiting,
+  returned-to-waiter, unavailable, error), stored as outcome + detail.
+- Daemon RPC is a method table (params schema, identity requirement, handler). CLI is
+  a command table; adapters contribute host-specific verbs via `commands()`.
+- Layering enforced by `scripts/check-layers.ts`; conventions in CLAUDE.md.
+- Removed: scan, terminal mappers, provider helpers. 17 files, ~2,700 lines.
+- Behavior fixes: a waited-for reply is not also pushed to the host; receipt watchers
+  start from a pre-delivery offset; registered-process liveness has its own clock.
+
 ## 1. Goal
 
 Prove the premise: two of Joshua's existing agent sessions exchange messages through

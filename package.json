@@ -7,16 +7,19 @@
     "modelbus": "src/cli.ts"
   },
   "scripts": {
-    "check": "bunx tsc --noEmit && bunx biome check .",
-    "fmt": "bunx biome format --write ."
+    "check": "bunx tsc --noEmit && bunx biome check . && bun run scripts/check-layers.ts && bun test",
+    "fmt": "bunx biome check --write .",
+    "migrate:generate": "bunx drizzle-kit generate"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "drizzle-orm": "^0.45.2",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
     "bun-types": "^1.4.2",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^7.0.2"
   }
 }
