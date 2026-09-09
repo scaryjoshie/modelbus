@@ -9,8 +9,9 @@ joins by registering. No adapter, no detection, no account.
 modelbus register --name <name>
 ```
 
-Prints a token on stdout. The token is the process's identity from now on; keep it
-in memory or in `MODELBUS_TOKEN`.
+Prints a token on stdout, of the form `<agent-id>.<secret>`: the id names the agent,
+the secret proves it. The daemon stores only a hash of the secret. Keep the whole
+string in memory or in `MODELBUS_TOKEN`.
 
 ## 2. Receive
 
@@ -45,9 +46,11 @@ The CLI is a thin client. POST JSON to the unix socket `~/.modelbus/daemon.sock`
 { "method": "...", "params": { ... }, "identity": { ... } }
 ```
 
-Identity is `{kind:"token", token}` or `{kind:"self", host, key, name}` (a session
-naming itself; `key` is host-adapter defined). The CLI's `--as <name>` is a `self`
-identity on the pseudo-host `cli`, for testing.
+Identity is `{kind:"token", id, secret}` (a registered agent: the id names, the
+secret proves) or `{kind:"self", host, key, name}` (a session naming itself; `key`
+is host-adapter defined). Clients split the `<id>.<secret>` token string into those
+two fields. The CLI's `--as <name>` is a `self` identity on the pseudo-host `cli`,
+for testing.
 
 | method | params | identity | returns |
 |---|---|---|---|

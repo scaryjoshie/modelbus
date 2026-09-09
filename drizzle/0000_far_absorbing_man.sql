@@ -16,6 +16,13 @@ CREATE TABLE `conversations` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `conversations_key_unique` ON `conversations` (`key`);--> statement-breakpoint
+CREATE TABLE `credentials` (
+	`agent_id` text PRIMARY KEY NOT NULL,
+	`secret_hash` text NOT NULL,
+	`created_at` integer NOT NULL,
+	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
 CREATE TABLE `deliveries` (
 	`message_id` text NOT NULL,
 	`to_agent_id` text NOT NULL,

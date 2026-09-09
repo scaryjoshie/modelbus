@@ -1,6 +1,14 @@
 import { allAdapters } from "./adapters/index.ts";
 import type { Identity } from "./client.ts";
 
+/** A registration token is `<agentId>.<secret>`: the id names, the secret proves. */
+export function parseToken(token: string): Identity {
+  const i = token.indexOf(".");
+  return i === -1
+    ? { kind: "token", id: token, secret: "" }
+    : { kind: "token", id: token.slice(0, i), secret: token.slice(i + 1) };
+}
+
 /**
  * Who am I? Asked by the MCP shim and the CLI from inside some process. Order:
  *  0. an explicit --as override (test only): a self identity on the pseudo-host "cli";
@@ -22,7 +30,7 @@ export async function whoAmI(opts: { as?: string } = {}): Promise<{
   });
   if (opts.as) return testIdentity(opts.as);
   if (process.env.MODELBUS_TOKEN) {
-    return { identity: { kind: "token", token: process.env.MODELBUS_TOKEN }, label: "registered" };
+    return { identity: parseToken(process.env.MODELBUS_TOKEN), label: "registered" };
   }
   const { MODELBUS_HOST, MODELBUS_KEY, MODELBUS_NAME } = process.env;
   if (MODELBUS_HOST && MODELBUS_KEY && MODELBUS_NAME) {

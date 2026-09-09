@@ -36,6 +36,11 @@ that isn't in the code.
   cleanup removed the sealed "handle", the `handles` and `presence` tables, and the
   durability/evidence/attestation metadata: they weren't read by anything. Don't
   reintroduce stored fields nothing consumes.
+- **Identity and proof are separate.** An agent's key (`hostKey`) is never a secret.
+  A registered agent authenticates with a token `<agent-id>.<secret>`; the daemon
+  stores only a hash of the secret, in the `credentials` table. This replaced the
+  earlier design where the registration token *was* the key (Joshua, rightly, called
+  that more than a smell). Rotation is now possible: change the secret, keep the id.
 - **Discovered and registered agents are the same thing to core.** Someone holds
   each agent's line: an adapter for a discovered host, the process itself (via an
   open `pull`) for a registered one. Core never runs a command on an agent's behalf;

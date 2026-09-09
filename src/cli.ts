@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import { allAdapters } from "./adapters/index.ts";
 import { type Identity, rpc } from "./client.ts";
 import { ensureDaemon } from "./ensure.ts";
-import { whoAmI } from "./identity.ts";
+import { parseToken, whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
 
 /**
@@ -33,7 +33,7 @@ function table(header: string[], rows: string[][]): string {
 }
 
 async function identityFor(values: { as?: string; token?: string }): Promise<Identity> {
-  if (values.token) return { kind: "token", token: values.token };
+  if (values.token) return parseToken(values.token);
   if (values.as) console.error(`(test identity: acting as "${values.as}")`);
   return (await whoAmI({ as: values.as })).identity;
 }

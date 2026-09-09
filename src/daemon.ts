@@ -7,7 +7,7 @@ import type { HostAdapter } from "./core/adapter.ts";
 import { Api, ApiError } from "./core/api.ts";
 import { GUARDS } from "./core/guards.ts";
 import { dbPath, socketPath } from "./core/paths.ts";
-import { Store } from "./core/store.ts";
+import { newId, Store } from "./core/store.ts";
 import { Tracker } from "./tracker.ts";
 
 /**
@@ -18,7 +18,7 @@ import { Tracker } from "./tracker.ts";
  *
  * Identity on the wire:
  *   - { kind: "self", host, key, name }  a session identifying itself
- *   - { kind: "token", token }           a self-registered process
+ *   - { kind: "token", id, secret }      a self-registered process (id names, secret proves)
  */
 
 /** Bun's maximum. Must exceed the longest long-poll. */
@@ -33,7 +33,7 @@ export const Identity = z.discriminatedUnion("kind", [
     key: z.string().min(1),
     name: z.string().min(1),
   }),
-  z.object({ kind: z.literal("token"), token: z.string().min(8) }),
+  z.object({ kind: z.literal("token"), id: z.string().min(1), secret: z.string() }),
 ]);
 export type Identity = z.infer<typeof Identity>;
 
@@ -78,10 +78,12 @@ function buildMethods(store: Store, api: Api, tracker: Tracker) {
     register: open({
       params: z.object({ name: z.string().min(1) }),
       handler: (p) => {
-        const token = randomBytes(16).toString("base64url");
-        const agent = store.bind({ host: REGISTERED_HOST, key: token, name: p.name });
+        // Identity (a fresh non-secret key) and the proof (a secret) are distinct.
+        const secret = randomBytes(24).toString("base64url");
+        const agent = store.bind({ host: REGISTERED_HOST, key: newId(), name: p.name });
+        store.setCredential(agent.id, secret);
         tracker.touch(agent.id);
-        return { agent, token };
+        return { agent, token: `${agent.id}.${secret}` };
       },
     }),
     send: authed({
@@ -132,8 +134,10 @@ export function createDaemon(
   function resolveIdentity(identity: Identity | undefined): string {
     if (!identity) throw new ApiError("identity required");
     if (identity.kind === "token") {
-      const agent = store.agentByHostKey(REGISTERED_HOST, identity.token);
-      if (!agent) throw new ApiError("unknown token; register first");
+      const agent = store.agentById(identity.id);
+      if (!agent || agent.host !== REGISTERED_HOST)
+        throw new ApiError("unknown token; register first");
+      if (!store.verifyCredential(agent.id, identity.secret)) throw new ApiError("bad token");
       tracker.touch(agent.id);
       return agent.id;
     }

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
@@ -12,6 +12,7 @@ import {
   agents,
   type ConversationRow,
   conversations,
+  credentials,
   deliveries,
   type MessageRow,
   messages,
@@ -118,6 +119,30 @@ export class Store {
     };
     this.db.insert(agents).values(agent).run();
     return agent;
+  }
+
+  // ---- credentials (registered-agent auth) --------------------------------
+
+  private static hash(secret: string): string {
+    return createHash("sha256").update(secret).digest("hex");
+  }
+
+  setCredential(agentId: string, secret: string): void {
+    const row = { agentId, secretHash: Store.hash(secret), createdAt: Date.now() };
+    this.db
+      .insert(credentials)
+      .values(row)
+      .onConflictDoUpdate({ target: credentials.agentId, set: row })
+      .run();
+  }
+
+  /** True if `secret` matches the stored hash for this agent. Constant-time. */
+  verifyCredential(agentId: string, secret: string): boolean {
+    const row = this.db.select().from(credentials).where(eq(credentials.agentId, agentId)).get();
+    if (!row) return false;
+    const a = Buffer.from(row.secretHash);
+    const b = Buffer.from(Store.hash(secret));
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   private freeName(preferred: string, forAgentId?: string): string {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rpc } from "../client.ts";
 import { createDaemon } from "../daemon.ts";
+import { parseToken } from "../identity.ts";
 import { Api, ApiError } from "./api.ts";
 import { GUARDS } from "./guards.ts";
 import { Store } from "./store.ts";
@@ -142,19 +143,14 @@ describe("protocol", () => {
         "other:registered",
       ]);
 
-      const sent = await rpc(
-        "send",
-        { to: "app", body: "hi app" },
-        { kind: "token", token: other.token },
-        unix,
-      );
+      const sent = await rpc("send", { to: "app", body: "hi app" }, parseToken(other.token), unix);
       expect(sent.delivery.status).toBe("queued");
-      const pulled = await rpc("pull", {}, { kind: "token", token: app.token }, unix);
+      const pulled = await rpc("pull", {}, parseToken(app.token), unix);
       expect(pulled.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["other: hi app"]);
       expect(pulled.items[0]?.body).not.toContain("[modelbus"); // pull returns the bare body
 
       await expect(
-        rpc("send", { to: "app", body: "x" }, { kind: "token", token: "nope-nope-nope" }, unix),
+        rpc("send", { to: "app", body: "x" }, parseToken("nope-nope-nope"), unix),
       ).rejects.toThrow(/unknown token/);
     } finally {
       d.stop();

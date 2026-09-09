@@ -57,7 +57,8 @@ said. Presence is re-observed every few seconds and lives in the tracker's memor
 
 | Table | Row per | Columns |
 |---|---|---|
-| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's), `host` (which adapter holds the line), `hostKey` (the host's own id, opaque to core), `lastSeen` |
+| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's), `host` (which adapter holds the line), `hostKey` (the host's own id, opaque to core, never a secret), `lastSeen` |
+| `credentials` | registered agent | `secretHash` (sha-256 of its token secret), `createdAt`; the agent's auth secret, kept apart from its identity |
 | `conversations` | pair | `kind = dm`, `key = dm:<sorted ids>` so there is one DM per pair |
 | `participants` | conversation × agent | ready for groups |
 | `messages` | message | `seq` (global order), `id` (short random; the receipt marker), conversation, sender, body |
@@ -73,17 +74,21 @@ migration. The store applies pending migrations on open.
 
 - **Agent id**: ours, permanent, the only identifier in messages, logs, or `who`.
 - **(host, hostKey)**: how the agent is recognized again. The adapter chooses the
-  key (Claude's session id, Codex's thread id, Aside's session id, a registration
-  token). Same pair = same agent, across daemon restarts and host restarts that keep
-  the host's identity (`--resume`, `codex resume`). Core compares keys and hands
-  them back to the adapter; it never interprets them.
+  key (Claude's session id, Codex's thread id, Aside's session id, or a minted
+  non-secret id for a registered process). Same pair = same agent, across daemon
+  restarts and host restarts that keep the host's identity (`--resume`,
+  `codex resume`). Core compares keys and hands them back to the adapter; it never
+  interprets them. The key is never a secret.
+- **Credential**: a registered agent also has a secret, stored only as a hash in the
+  `credentials` table, separate from its key so it can rotate without changing
+  identity. Its token is `<agent-id>.<secret>`: the id names, the secret proves.
 
 Callers identify themselves on the RPC with one of:
 
 | kind | fields | resolved by |
 |---|---|---|
 | `self` | host, key, name | `tracker.identify`: bind by (host, key), record contact |
-| `token` | token | agent with host `registered` and that key; record contact |
+| `token` | id, secret | agent looked up by id (must be host `registered`); secret verified against its credential hash; record contact |
 
 `identity.ts` decides which to send from inside a process: explicit `--as` (a
 `self` identity on the pseudo-host `cli`, test only), then `MODELBUS_TOKEN`, then

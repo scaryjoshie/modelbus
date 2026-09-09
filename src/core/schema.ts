@@ -93,6 +93,19 @@ export const deliveries = sqliteTable(
   ],
 );
 
+/**
+ * Auth secret for a registered agent, separate from its identity. We store only a
+ * hash; the raw token is `<agentId>.<secret>` and lives with the process. Splitting
+ * it from `agents.hostKey` means the secret can rotate without changing identity.
+ */
+export const credentials = sqliteTable("credentials", {
+  agentId: text("agent_id")
+    .primaryKey()
+    .references(() => agents.id),
+  secretHash: text("secret_hash").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
 export type AgentRow = typeof agents.$inferSelect;
 export type ConversationRow = typeof conversations.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
