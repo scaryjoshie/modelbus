@@ -18,24 +18,22 @@ Most coding-agent hosts (Claude Code, Codex CLI, Cursor, Gemini CLI, OpenCode, G
 
 ## Status
 
-Design phase, with one working piece: a live-session detector.
+Working POC: Claude Code, Codex, and Aside sessions exchange direct messages through
+a local daemon, with no per-message prompts, and any process can join by registering.
 
 ```
 bun install
-bun run scan          # table of every agent session on this machine
-bun run scan --json
+bun run src/cli.ts init --write   # wires Claude Code, Codex, Aside (writes their configs)
+bun run src/cli.ts who            # agents on the bus
+bun run src/cli.ts send --to <name> "text"
 ```
 
-`scan` finds Claude Code sessions (from their on-disk registry), Codex and other
-terminal hosts (from the process table), and Aside browser sessions (from its local
-daemon), then maps each terminal session to its cmux workspace and surface. The
-`reach` column says how a message could be delivered to each session:
-`claude-socket` (Claude Code's messaging socket), `aside-mcp` (Aside as MCP client +
-routine wake), `cmux-send` (text injection into its terminal surface), or `pull-only`.
+Layout: `src/core` (store, api, guards, adapter interface), `src/daemon.ts` and
+`src/tracker.ts` (the bus), `src/adapters/*` (one file per host plus self-registration),
+`src/cli.ts` and `src/mcp.ts` (clients).
 
 Docs:
 - `docs/protocol.md` — how any process joins the bus (register, send, receive).
-- `docs/poc-spec.md` — the DM-only, no-UI POC: three tools, data model, delivery,
-  identity binding, providers, build order. A proposal, not a decision.
+- `docs/poc-spec.md` — the POC spec with milestones logged. A proposal, not a decision.
 - `docs/design-notes.md` — the wider exploration; explicitly drafts, not decisions.
 - `docs/host-adapter-inventory-and-bus-design.md` — external research report.

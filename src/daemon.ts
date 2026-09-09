@@ -80,6 +80,7 @@ export function createDaemon(
     if (identity.kind === "token") {
       const h = store.handleByKey("registered", identity.token);
       if (!h) throw new ApiError("unknown token; register first");
+      registered.touch(identity.token);
       store.touch(h.agent_id);
       return h.agent_id;
     }

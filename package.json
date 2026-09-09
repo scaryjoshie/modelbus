@@ -7,7 +7,6 @@
     "modelbus": "src/cli.ts"
   },
   "scripts": {
-    "scan": "bun run src/cli.ts scan",
     "check": "bunx tsc --noEmit && bunx biome check .",
     "fmt": "bunx biome format --write ."
   },

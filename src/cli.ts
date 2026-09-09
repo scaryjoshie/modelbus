@@ -2,12 +2,10 @@
 import { parseArgs } from "node:util";
 import { type Identity, rpc } from "./client.ts";
 import type { Agent, InboxItem } from "./core/store.ts";
-import { scan } from "./scan.ts";
-import type { LiveSession } from "./types.ts";
 
 /**
  * modelbus CLI. Test surface for the POC; see docs/poc-spec.md section 10.
- *   serve | scan | send | sync | who | log | hook | attach | mcp | init
+ *   serve | send | sync | who | log | register | hook | attach | mcp | init
  * `--as <name>` is a TEST-ONLY identity override (spec section 6).
  */
 
@@ -33,64 +31,22 @@ function table(rows: string[][], header: string[]): string {
   return [fmt(header), fmt(widths.map((w) => "-".repeat(w))), ...rows.map(fmt)].join("\n");
 }
 
-function renderScan(sessions: LiveSession[]): string {
-  const rows = sessions.map((s) => [
-    s.host,
-    s.name.length > 32 ? `${s.name.slice(0, 31)}…` : s.name,
-    s.pid ? String(s.pid) : "",
-    s.status ?? "",
-    age(s.startedAt),
-    shortCwd(s.cwd),
-    s.terminal
-      ? `${s.terminal.workspaceTitle ?? s.terminal.workspace} / ${s.terminal.surfaceTitle ?? s.terminal.surface}`
-      : "",
-    s.reach.join(","),
-  ]);
-  return table(rows, ["host", "name", "pid", "status", "age", "cwd", "terminal", "reach"]);
-}
-
 /** One inbox item as the model sees it: `name: body`, continuation lines indented. */
 export function renderItem(i: InboxItem): string {
   const [first = "", ...rest] = i.body.split("\n");
   return [`${i.from_name}: ${first}`, ...rest.map((l) => `  ${l}`)].join("\n");
 }
 
-/**
- * Identity for CLI send/sync: the host session this shell runs inside (a Claude Code
- * or Codex session's Bash tool), or the test-only --as override.
- */
 async function resolveCliIdentity(values: { as?: string; token?: string }): Promise<Identity> {
-  const token = values.token ?? process.env.MODELBUS_TOKEN;
-  if (token) return { kind: "token", token };
-  if (values.as) {
-    console.error(`(test identity: acting as "${values.as}")`);
-    return { kind: "cli", as: values.as };
+  if (values.token) return { kind: "token", token: values.token };
+  if (values.as) console.error(`(test identity: acting as "${values.as}")`);
+  const { whoAmI } = await import("./identity.ts");
+  try {
+    return (await whoAmI({ as: values.as })).identity;
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(2);
   }
-  const { findClaudeSession } = await import("./hostid.ts");
-  const claude = await findClaudeSession();
-  if (claude) {
-    return {
-      kind: "self",
-      host: "claude-code",
-      key: claude.sessionId,
-      name: claude.name,
-      evidence: `cli ancestor pid ${claude.pid}`,
-    };
-  }
-  const { codexDisplayNames, findCodexSession } = await import("./providers/codex.ts");
-  const codex = await findCodexSession();
-  if (codex) {
-    const name = codexDisplayNames([codex.thread]).get(codex.thread.id) ?? "codex-1";
-    return {
-      kind: "self",
-      host: "codex",
-      key: codex.thread.id,
-      name,
-      evidence: `cli ancestor pid ${codex.pid}`,
-    };
-  }
-  console.error("not inside a known host session; pass --as <name> (test-only identity)");
-  process.exit(2);
 }
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
@@ -109,12 +65,6 @@ async function main() {
           process.on("SIGINT", stop);
           process.on("SIGTERM", stop);
         });
-      return;
-    }
-    case "scan": {
-      const sessions = await scan();
-      if (rest.includes("--json")) console.log(JSON.stringify(sessions, null, 2));
-      else console.log(`${renderScan(sessions)}\n\n${sessions.length} live sessions`);
       return;
     }
     case "send": {
@@ -245,7 +195,7 @@ async function main() {
     case "hook": {
       // Claude Code SessionStart hook: stdin carries the hook JSON. Stdout is added
       // to the session's context, so print one useful line.
-      const { hookSessionStart } = await import("./providers/claude-code-setup.ts");
+      const { hookSessionStart } = await import("./adapters/claude-code.ts");
       const stdin = await Bun.stdin.text();
       const name = await hookSessionStart(stdin);
       console.log(
@@ -256,13 +206,13 @@ async function main() {
     case "attach": {
       // Run inside a live Claude Code session (e.g. from its Bash tool) to register it
       // without the hook. Needs the session's environment.
-      const { attachCurrentSession } = await import("./providers/claude-code-setup.ts");
+      const { attachCurrentSession } = await import("./adapters/claude-code.ts");
       console.log(`attached as "${await attachCurrentSession()}"`);
       return;
     }
     case "post": {
       // Internal helper: {socketPath, token?, text} on stdin; write to the inbox
-      // socket and exit immediately (see claude-code-wake.ts).
+      // socket and exit immediately (see adapters/claude-code.ts).
       const { post } = await import("./adapters/claude-code.ts");
       const p = JSON.parse(await Bun.stdin.text()) as {
         socketPath: string;
@@ -295,7 +245,6 @@ async function main() {
         [
           "usage: modelbus <command>",
           "  serve                                run the daemon",
-          "  scan [--json]                        live sessions on this machine",
           "  send [--as A] --to B [--wait N] <text> send a DM (as this session, or test identity)",
           "  sync [--as A] [--scope B] [--wait N]  read my inbox",
           "  who [filter] [--fresh]               agents on the bus (live sessions)",

@@ -1,43 +1,66 @@
+import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ConfigurePlan, HostAdapter, Observation } from "../core/adapter.ts";
 import { cliPath } from "../ensure.ts";
-import { aside as asideDetect } from "../providers/aside.ts";
-import { watchTranscript } from "../providers/watch.ts";
+import { fileOffset, watchTranscript } from "../util/watch.ts";
 
 /**
- * Aside adapter.
+ * Aside (the browser).
  *
- * Identity: Aside's session record id (stored by its daemon indefinitely), plus the
- * account it belongs to. Sealed in the handle.
+ * Identity: Aside's session record id plus its account, from the per-account
+ * SQLite store at ~/.aside/u/<N>/state.db (read-only). Stored indefinitely.
  *
- * Delivery: Aside's CLI, `aside --account u<N> session queue <id> "<text>"`, which
- * queues the text into the existing session like `codex queue` does for Codex
- * (verified 2026-09-08: the text appears as a user message and a turn runs).
- * `steer` is the louder upgrade, not used in v0.
+ * Delivery: Aside's CLI, `aside --account u<N> session queue <id> "<text>"`, the
+ * analogue of `codex queue`. Receipt: the session's messages.jsonl records the
+ * queued text as a `user` entry.
  *
- * Receipt: the session's `messages.jsonl` under ~/.aside/u/<N>/sessions/<date>_<id>/
- * records the queued text as a `user` entry containing our marker.
+ * Outbound: Aside spawns one MCP shim per account, so a message an Aside session
+ * sends is attributed to the account (`init` names it in the shim's environment).
  *
- * Outbound: Aside spawns the MCP shim itself (one per account), so a message an
- * Aside session sends is attributed to the account, not the session. `init` writes
- * the shim into each account's settings with MODELBUS_* env naming that account.
+ * All of this is observed local layout, not a public contract.
  */
-
-interface AsideHandle {
-  sessionId: string;
-  account: number;
-}
 
 const usersDir = () => join(homedir(), ".aside", "u");
 const asideCli = () => join(homedir(), ".local", "bin", "aside");
+const HEALTH = "http://127.0.0.1:21420/health";
 
-function accountDirs(): number[] {
+interface Row {
+  id: string;
+  title: string;
+  status: string;
+  updated_at: number;
+  created_at: number;
+  parent_id: string | null;
+  trigger: string | null;
+}
+
+function accounts(): number[] {
   if (!existsSync(usersDir())) return [];
   return readdirSync(usersDir())
     .filter((d) => /^\d+$/.test(d) && existsSync(join(usersDir(), d, "settings.json")))
     .map(Number);
+}
+
+function sessionsOf(account: number): Row[] {
+  const path = join(usersDir(), String(account), "state.db");
+  if (!existsSync(path)) return [];
+  try {
+    const db = new Database(path, { readonly: true });
+    try {
+      return db
+        .query<Row, []>(
+          `SELECT id, title, status, updated_at, created_at, parent_id, trigger FROM sessions
+           WHERE archived_at IS NULL AND ephemeral = 0 ORDER BY updated_at DESC LIMIT 50`,
+        )
+        .all();
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
 }
 
 function transcriptPath(account: number, sessionId: string): string | undefined {
@@ -47,137 +70,127 @@ function transcriptPath(account: number, sessionId: string): string | undefined 
   return match ? join(dir, match, "messages.jsonl") : undefined;
 }
 
+async function daemonUp(): Promise<boolean> {
+  try {
+    return (await fetch(HEALTH, { signal: AbortSignal.timeout(1500) })).ok;
+  } catch {
+    return false;
+  }
+}
+
+interface Handle {
+  sessionId: string;
+  account: number;
+}
+
 export class AsideAdapter implements HostAdapter {
-  readonly host = "aside" as const;
+  readonly host = "aside";
 
   async observe(): Promise<Observation[]> {
-    const sessions = await asideDetect.detect();
-    if (!sessions.length) return []; // daemon not running
+    if (!(await daemonUp())) return [];
     const cli = existsSync(asideCli());
-    const recent = Date.now() - 7 * 24 * 3600 * 1000;
+    const recent = Date.now() / 1000 - 7 * 24 * 3600;
     const out: Observation[] = [];
-    for (const s of sessions) {
-      if (!s.sessionId) continue;
-      const account = typeof s.extra?.account === "number" ? s.extra.account : -1;
-      if (account < 0) continue;
-      const last = Date.parse(String(s.extra?.lastActive ?? ""));
-      if (!Number.isNaN(last) && last < recent) continue;
-      const subagent = Boolean(s.extra?.subagent);
-      const handle: AsideHandle = { sessionId: s.sessionId, account };
-      out.push({
-        handle,
-        key: s.sessionId,
-        name: s.name,
-        durability: "permanent",
-        relationship: subagent ? "subagent" : "top-level",
-        parentKey: typeof s.extra?.parentId === "string" ? s.extra.parentId : undefined,
-        evidence: `aside u/${account} state.db sessions row`,
-        reachable: cli,
-        note: cli ? undefined : "Aside CLI not installed (~/.local/bin/aside)",
-        pid: s.pid,
-        status: s.status,
-        title: s.name,
-        startedAt: s.startedAt,
-      });
+    for (const account of accounts()) {
+      for (const s of sessionsOf(account)) {
+        if (s.updated_at < recent) continue;
+        const subagent = Boolean(s.parent_id) || (s.trigger ?? "").includes('"subagent"');
+        out.push({
+          handle: { sessionId: s.id, account } satisfies Handle,
+          key: s.id,
+          name: s.title || `aside-${s.id}`,
+          durability: "permanent",
+          relationship: subagent ? "subagent" : "top-level",
+          parentKey: s.parent_id ?? undefined,
+          evidence: `aside u/${account} state.db`,
+          reachable: cli,
+          note: cli ? undefined : "Aside CLI not installed (~/.local/bin/aside)",
+          status: s.status,
+          title: s.title,
+          startedAt: s.created_at * 1000,
+        });
+      }
     }
     return out;
   }
 
-  handleFromKey(key: string): AsideHandle {
-    // Only used when a session identifies itself; Aside sessions don't, so the
-    // account is unknown here and delivery resolves it from the session id.
+  handleFromKey(key: string): Handle {
     return { sessionId: key, account: -1 };
   }
 
-  async deliver(
-    handle: unknown,
-    text: string,
-    marker: string,
-    onReceipt: () => void,
-  ): Promise<string> {
-    const h = handle as AsideHandle;
-    const account = h.account >= 0 ? h.account : this.accountOf(h.sessionId);
+  async deliver(handle: unknown, text: string, marker: string, onReceipt: () => void) {
+    const h = handle as Handle;
+    const account =
+      h.account >= 0 ? h.account : accounts().find((a) => transcriptPath(a, h.sessionId));
     if (account === undefined) return "error: account for session not found";
     if (!existsSync(asideCli())) return "error: aside cli not installed";
+    const path = transcriptPath(account, h.sessionId);
+    const fromOffset = path ? fileOffset(path) : 0;
     const proc = Bun.spawn(
       [asideCli(), "--account", `u${account}`, "session", "queue", h.sessionId, text],
       { stdout: "pipe", stderr: "pipe" },
     );
-    const code = await proc.exited;
-    if (code !== 0) {
-      const err = (await new Response(proc.stderr).text()).trim();
-      return `error: aside session queue exit ${code}${err ? `: ${err.split("\n")[0]}` : ""}`;
+    if ((await proc.exited) !== 0) {
+      const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
+      return `error: aside session queue failed${err ? `: ${err}` : ""}`;
     }
-    const path = transcriptPath(account, h.sessionId);
-    if (path) watchTranscript({ path, marker, accept: isAsideUserMessage, onFound: onReceipt });
+    if (path)
+      watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onReceipt });
     return "queued";
   }
 
-  private accountOf(sessionId: string): number | undefined {
-    for (const a of accountDirs()) if (transcriptPath(a, sessionId)) return a;
-    return undefined;
-  }
-
   configure(): ConfigurePlan {
-    const bun = process.execPath;
-    const cli = cliPath();
-    const targets = accountDirs();
-    const entryFor = (account: number) => ({
+    const entry = (account: number) => ({
       enabled: true,
       transport: "stdio",
-      command: bun,
-      args: [cli, "mcp"],
+      command: process.execPath,
+      args: [cliPath(), "mcp"],
       env: {
         MODELBUS_HOST: "aside",
         MODELBUS_KEY: `account:${account}`,
         MODELBUS_NAME: account === 0 ? "aside" : `aside-${account}`,
       },
     });
-    // Aside only offers a server's tools once `mcp.inventories.<name>` holds a cached
-    // tool list (its settings screen builds it by connecting once). Write ours too.
+    // Aside only offers a server's tools once its settings hold a cached tool
+    // inventory for it; it does not query a new server on its own.
     const inventory = {
       tools: [
         {
           name: "send",
-          description:
-            "Send a direct message to another agent on this machine by name. Optionally wait up to N seconds for its reply.",
+          description: "Message another agent on this machine by name.",
           inputSchema: {
             type: "object",
             properties: {
-              to: { type: "string", description: "recipient agent name, as shown by who" },
-              body: { type: "string", description: "message text" },
-              wait: { type: "integer", minimum: 0, maximum: 600 },
+              to: { type: "string" },
+              body: { type: "string" },
+              wait: { type: "number" },
             },
             required: ["to", "body"],
           },
         },
         {
           name: "who",
-          description:
-            "List agents on this machine's message bus. Optional substring filter on name, host, or directory.",
+          description: "List the agents on this machine.",
           inputSchema: { type: "object", properties: { filter: { type: "string" } } },
         },
       ],
       refreshedAt: new Date().toISOString(),
     };
     return {
-      describe: targets.map(
-        (a) =>
-          `Aside (~/.aside/u/${a}/settings.json): merge mcp.servers.modelbus = ${JSON.stringify(entryFor(a))} and its tool inventory`,
+      describe: accounts().map(
+        (a) => `Aside (~/.aside/u/${a}/settings.json): mcp.servers.modelbus + tool inventory`,
       ),
       apply: async () => {
         const done: string[] = [];
-        for (const a of targets) {
+        for (const a of accounts()) {
           const path = join(usersDir(), String(a), "settings.json");
           const s = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
           const mcp = (s.mcp ??= {}) as {
             servers?: Record<string, unknown>;
             inventories?: Record<string, unknown>;
           };
-          mcp.servers ??= {};
-          mcp.inventories ??= {};
-          mcp.servers.modelbus = entryFor(a);
-          mcp.inventories.modelbus = inventory;
+          (mcp.servers ??= {}).modelbus = entry(a);
+          (mcp.inventories ??= {}).modelbus = inventory;
           writeFileSync(path, `${JSON.stringify(s, null, 2)}\n`);
           done.push(`aside u/${a}: wrote mcp.servers.modelbus + inventory`);
         }
@@ -187,10 +200,9 @@ export class AsideAdapter implements HostAdapter {
   }
 }
 
-export function isAsideUserMessage(line: string): boolean {
+function isUserEntry(line: string): boolean {
   try {
-    const d = JSON.parse(line) as { role?: string };
-    return d.role === "user";
+    return (JSON.parse(line) as { role?: string }).role === "user";
   } catch {
     return false;
   }

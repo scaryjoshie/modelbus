@@ -127,6 +127,69 @@ describe("waiting", () => {
   });
 });
 
+describe("protocol: registration", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "modelbus-proto-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("register, send with token, receive by pull and by deliver command", async () => {
+    const unix = join(dir, "d.sock");
+    const out = join(dir, "inbox.txt");
+    const d = createDaemon({ store: new Store(join(dir, "d.db")), unix, track: false });
+    try {
+      const app = await rpc<{ agent: { name: string }; token: string }>(
+        "register",
+        { name: "app", host: "test app", deliver: `cat >> ${out}` },
+        undefined,
+        unix,
+      );
+      const other = await rpc<{ agent: { name: string }; token: string }>(
+        "register",
+        { name: "other" },
+        undefined,
+        unix,
+      );
+      expect(app.agent.name).toBe("app");
+      expect(app.token.length).toBeGreaterThan(8);
+
+      // other -> app: delivered by running app's command
+      const sent = await rpc<{ wakeResult: string }>(
+        "send",
+        { to: "app", body: "hi app" },
+        { kind: "token", token: other.token },
+        unix,
+      );
+      expect(sent.wakeResult).toBe("delivered");
+      expect(await Bun.file(out).text()).toContain("hi app");
+      expect(await Bun.file(out).text()).toContain("[modelbus #");
+
+      // app -> other: other has no deliver command, so it pulls
+      await rpc(
+        "send",
+        { to: "other", body: "hi other" },
+        { kind: "token", token: app.token },
+        unix,
+      );
+      const pulled = await rpc<{ items: Array<{ body: string; from_name: string }> }>(
+        "pull",
+        {},
+        { kind: "token", token: other.token },
+        unix,
+      );
+      expect(pulled.items.map((i) => `${i.from_name}: ${i.body}`)).toEqual(["app: hi other"]);
+
+      // an unknown token is refused
+      await expect(
+        rpc("send", { to: "app", body: "x" }, { kind: "token", token: "nope-nope-nope" }, unix),
+      ).rejects.toThrow(/unknown token/);
+    } finally {
+      d.stop();
+    }
+  });
+});
+
 describe("persistence", () => {
   let dir: string;
   beforeEach(() => {

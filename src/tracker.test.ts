@@ -5,7 +5,7 @@ import { Tracker } from "./tracker.ts";
 
 /** A fake host whose identity is an opaque token the tracker must never read. */
 class FakeHost implements HostAdapter {
-  readonly host = "unknown" as const;
+  readonly host = "fake";
   live: Observation[] = [];
   delivered: Array<{ handle: unknown; text: string }> = [];
   constructor(private readonly secret = "sealed") {}
@@ -109,7 +109,7 @@ describe("tracker", () => {
     host.live = [obs("k1", "one")];
     await t.reconcile();
     expect(store.handleOf(t.list()[0]?.id ?? "")?.attestation).toBe("observed");
-    const a = t.identify({ host: "unknown", key: "k1", name: "one", evidence: "hook" });
+    const a = t.identify({ host: "fake", key: "k1", name: "one", evidence: "hook" });
     expect(a.name).toBe("one");
     const h = store.handleOf(a.id);
     expect(h?.attestation).toBe("attested");

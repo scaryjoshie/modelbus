@@ -1,23 +1,28 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 
+/** Current size of a file, to capture *before* a delivery so no entry is missed. */
+export function fileOffset(path: string): number {
+  return existsSync(path) ? statSync(path).size : 0;
+}
+
 /**
- * Poll an append-only transcript file for a line that contains `marker` and
- * satisfies `accept`. Calls `onFound` once, then stops. Starts reading from the
- * current end of file. Shared by the Claude Code and Codex receipt watchers.
+ * Poll an append-only transcript for a line containing `marker` that `accept`s.
+ * Reads from `fromOffset` (capture it before delivering). Calls `onFound` once.
  */
 export function watchTranscript(opts: {
   path: string;
   marker: string;
   accept: (line: string) => boolean;
   onFound: () => void;
+  fromOffset?: number;
   intervalMs?: number;
   timeoutMs?: number;
 }): () => void {
   const intervalMs = opts.intervalMs ?? 1000;
   const timeoutMs = opts.timeoutMs ?? 15 * 60 * 1000;
-  let offset = existsSync(opts.path) ? statSync(opts.path).size : 0;
+  let offset = opts.fromOffset ?? fileOffset(opts.path);
   const started = Date.now();
-  const timer = setInterval(() => {
+  const check = () => {
     if (Date.now() - started > timeoutMs) return stop();
     if (!existsSync(opts.path)) return;
     const size = statSync(opts.path).size;
@@ -34,7 +39,9 @@ export function watchTranscript(opts: {
         return;
       }
     }
-  }, intervalMs);
+  };
+  const timer = setInterval(check, intervalMs);
   const stop = () => clearInterval(timer);
+  check();
   return stop;
 }

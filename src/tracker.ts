@@ -81,7 +81,7 @@ export class Tracker {
         seen.add(agent.id);
         this.store.upsertPresence(agent.id, {
           pid: o.pid ?? null,
-          tty: o.tty ?? null,
+          tty: null,
           cwd: o.cwd ?? null,
           status: o.status ?? null,
           title: o.title ?? null,

@@ -1,10 +1,11 @@
 import { $ } from "bun";
 
+/** Small process-table helpers shared by adapters. */
+
 export interface ProcInfo {
   pid: number;
   ppid: number;
   tty?: string;
-  /** Process start time as epoch ms, best effort. */
   startedAt?: number;
   args: string;
   /** basename of argv[0] */
@@ -13,10 +14,9 @@ export interface ProcInfo {
 
 let cache: { at: number; procs: ProcInfo[] } | undefined;
 
-/** Snapshot of the process table. Cached for one second so providers can share it. */
+/** Snapshot of the process table, cached for one second. */
 export async function listProcesses(): Promise<ProcInfo[]> {
   if (cache && Date.now() - cache.at < 1000) return cache.procs;
-  // lstart is a fixed-width date; args is last so it may contain spaces.
   const out = await $`ps -axo pid=,ppid=,tty=,lstart=,args=`.text();
   const procs: ProcInfo[] = [];
   for (const line of out.split("\n")) {
@@ -50,7 +50,7 @@ export function isAlive(pid: number): boolean {
   }
 }
 
-/** Current working directory of a process via lsof. Returns undefined if unavailable. */
+/** Working directory of a process via lsof, or undefined. */
 export async function cwdOf(pid: number): Promise<string | undefined> {
   try {
     const out = await $`lsof -a -p ${pid} -d cwd -Fn`.quiet().text();
@@ -59,4 +59,30 @@ export async function cwdOf(pid: number): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+export interface Ancestor {
+  pid: number;
+  ppid: number;
+  comm: string;
+}
+
+/** This process's ancestors, nearest first, up to `max` levels. */
+export async function ancestors(startPid: number = process.pid, max = 12): Promise<Ancestor[]> {
+  const out: Ancestor[] = [];
+  let pid = startPid;
+  for (let i = 0; i < max && pid > 1; i++) {
+    let line: string;
+    try {
+      line = (await $`ps -o pid=,ppid=,comm= -p ${pid}`.quiet().text()).trim();
+    } catch {
+      break;
+    }
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (!m) break;
+    const a = { pid: Number(m[1]), ppid: Number(m[2]), comm: m[3] ?? "" };
+    out.push(a);
+    pid = a.ppid;
+  }
+  return out;
 }

@@ -23,13 +23,20 @@ export interface RegisteredHandle {
 const CONTACT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export class RegisteredAdapter implements HostAdapter {
-  readonly host = "registered" as const;
+  readonly host = "registered";
+  /** Last time each token was presented. The tracker's own updates never touch this. */
+  private readonly contact = new Map<string, number>();
 
   constructor(private readonly store: Store) {}
+
+  touch(token: string): void {
+    this.contact.set(token, Date.now());
+  }
 
   /** Create the agent and return its token. `hostLabel` is free text shown in `who`. */
   register(opts: { name: string; hostLabel?: string; pid?: number; deliver?: string }) {
     const token = randomBytes(16).toString("base64url");
+    this.contact.set(token, Date.now());
     const handle: RegisteredHandle = { token, pid: opts.pid, deliver: opts.deliver };
     const agent = this.store.bind({
       host: this.host,
@@ -64,9 +71,10 @@ export class RegisteredAdapter implements HostAdapter {
       if (!h) continue;
       const handle = JSON.parse(h.handle) as RegisteredHandle;
       const p = this.store.presenceOf(a.id);
+      const last = this.contact.get(handle.token);
       const alive = handle.pid
         ? isAlive(handle.pid)
-        : Date.now() - a.last_seen < CONTACT_TIMEOUT_MS;
+        : last !== undefined && Date.now() - last < CONTACT_TIMEOUT_MS;
       if (!alive) continue;
       out.push({
         handle,
