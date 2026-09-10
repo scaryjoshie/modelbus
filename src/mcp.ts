@@ -1,8 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createClient } from "./client.ts";
-import { ensureDaemon } from "./ensure.ts";
+import { createClient, DaemonUnreachable } from "./client.ts";
 import { whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
 
@@ -10,7 +9,9 @@ import { renderItem } from "./render.ts";
  * The stdio shim: an MCP server a host spawns per session. It asks the providers who
  * it is (identity.ts), then forwards `send` and `who` to the daemon. `sync` is only
  * registered with --with-sync, for hosts that cannot receive automatically.
- * Nothing host-specific lives here.
+ * Nothing host-specific lives here. The shim never starts the daemon: if it is not
+ * running, every tool says so until it is, and the session binds on the first call
+ * that gets through.
  */
 
 const text = (t: string, isError = false) => ({
@@ -19,17 +20,27 @@ const text = (t: string, isError = false) => ({
 });
 
 export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
-  await ensureDaemon();
   const { identity, label, attach } = await whoAmI();
   const client = createClient(identity);
-  const me = (await client.request("bind", {})).agent.name;
-  // Hand the daemon whatever our provider says it needs to reach this session.
-  if (attach) await client.request("attach", attach).catch(() => undefined);
+  let me: string | undefined;
+  /** Bind once, and hand the daemon whatever our provider says it needs to reach this session. */
+  const bound = async (): Promise<string> => {
+    if (me) return me;
+    me = (await client.request("bind", {})).agent.name;
+    if (attach) await client.request("attach", attach).catch(() => undefined);
+    return me;
+  };
+  try {
+    await bound();
+  } catch (e) {
+    if (!(e instanceof DaemonUnreachable)) throw e;
+    process.stderr.write(`modelbus mcp: ${e.message}; tools will say so until it is\n`);
+  }
 
   const server = new McpServer(
     { name: "modelbus", version: "0.0.0" },
     {
-      instructions: `You are "${me}" on modelbus, a message bus between the agents on this machine.`,
+      instructions: `You are "${me ?? label}" on modelbus, a message bus between the agents on this machine.`,
     },
   );
 
@@ -45,6 +56,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
     },
     async ({ to, body, wait }) => {
       try {
+        await bound();
         const r = await client.request("send", { to, body, wait });
         const d = r.delivery;
         let out = `sent to ${r.to.name}${d.status === "failed" ? ` (not delivered: ${d.detail})` : ""}`;
@@ -63,11 +75,16 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
-      const r = await client.request("who", { filter });
-      const lines = r.agents
-        .filter((a) => a.name !== me && (filter || a.reachable))
-        .map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
-      return text(lines.length ? lines.join("\n") : "nobody else is on the bus");
+      try {
+        const self = await bound();
+        const r = await client.request("who", { filter });
+        const lines = r.agents
+          .filter((a) => a.name !== self && (filter || a.reachable))
+          .map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
+        return text(lines.length ? lines.join("\n") : "nobody else is on the bus");
+      } catch (e) {
+        return text(e instanceof Error ? e.message : String(e), true);
+      }
     },
   );
 
@@ -82,15 +99,22 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
         },
       },
       async ({ scope, wait }) => {
-        const r = await client.request("pull", { scope, wait });
-        const lines = r.items.map(renderItem);
-        if (r.more) lines.push(`[${r.more} more; call sync again]`);
-        if (r.moreElsewhere) lines.push(`[${r.moreElsewhere} unread in other DMs]`);
-        return text(lines.length ? lines.join("\n") : "nothing");
+        try {
+          await bound();
+          const r = await client.request("pull", { scope, wait });
+          const lines = r.items.map(renderItem);
+          if (r.more) lines.push(`[${r.more} more; call sync again]`);
+          if (r.moreElsewhere) lines.push(`[${r.moreElsewhere} unread in other DMs]`);
+          return text(lines.length ? lines.join("\n") : "nothing");
+        } catch (e) {
+          return text(e instanceof Error ? e.message : String(e), true);
+        }
       },
     );
   }
 
-  process.stderr.write(`modelbus mcp: bound as ${label}\n`);
+  process.stderr.write(
+    `modelbus mcp: ${me ? `bound as ${me}` : `identity ${label}, not yet bound`}\n`,
+  );
   await server.connect(new StdioServerTransport());
 }

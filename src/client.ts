@@ -39,9 +39,7 @@ export async function rpc<M extends MethodName>(
       body: JSON.stringify({ method, params, identity }),
     });
   } catch (e) {
-    throw new DaemonUnreachable(
-      `cannot reach modelbus daemon at ${unix} (${e instanceof Error ? e.message : e}); start it with: modelbus serve`,
-    );
+    throw new DaemonUnreachable(`modelbus is not running (${unix}); start it with: modelbus start`);
   }
   const data = (await res.json()) as { error?: string } & Result<M>;
   if (!res.ok) throw new Error(data.error ?? `rpc ${method} failed (${res.status})`);

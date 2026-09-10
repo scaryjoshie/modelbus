@@ -9,7 +9,7 @@ import { join, relative } from "node:path";
  *   helpers   src/util/**            may import: nothing else in src
  *   runtime   src/runtime/**         may import: core, util, runtime
  *   providers src/providers/**       may import: own folder, runtime contract, delivery, paths, util
- *   clients   cli, mcp, identity, client, ensure, render, daemon: anything
+ *   clients   cli, mcp, identity, client, service, render, daemon: anything
  *
  * Fails with a list of violations. Run as part of `bun run check`.
  */

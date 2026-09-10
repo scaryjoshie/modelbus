@@ -14,14 +14,18 @@ without a native delivery integration receives through `pull` / `sync`.
 bun install
 bun run src/cli.ts init          # describe host setup without writing it
 bun run src/cli.ts init --write  # apply host configuration
+bun run src/cli.ts start         # run the daemon as a login service (macOS); `serve` runs it in the foreground
 bun run src/cli.ts who
 bun run src/cli.ts send --to <name> "text"
 ```
 
+Nothing starts the daemon for you; `start` is the one explicit act, `stop` undoes
+it, `restart` bounces it after a code change.
+
 Sending requires an identified session or registration credential. Host setup may
 require restarting the host to load its tools. Claude's delivery token is kept by
 the daemon across restarts and forgotten when the session ends.
-After updating this source checkout, restart a running daemon to load the changes.
+After updating this source checkout, `modelbus restart` loads the changes.
 Everything under `~/.modelbus` is readable by its owner only.
 
 ## Boundaries

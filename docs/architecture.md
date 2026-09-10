@@ -29,7 +29,7 @@ src/
   daemon.ts    composition root: store + api + provider manager + providers + RPC method table
   client.ts    typed rpc() and bound createClient() over the unix socket
   identity.ts  "who am I" for shim/CLI
-  ensure.ts    start the daemon on demand         render.ts    one-line message text
+  service.ts   the daemon as a login service      render.ts    one-line message text
   cli.ts       command table
   mcp.ts       the stdio MCP shim hosts spawn per session
 scripts/check-layers.ts   fails the build on layering violations
@@ -247,8 +247,15 @@ so `rpc("who", { filter })` is checked at compile time. See `protocol.md`.
 Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `attach`, `init`,
 `mcp`, `serve`); the MCP shim (`send`, `who`, and
 `sync` only with `--with-sync`; one-sentence instructions); any program via the
-socket. `MODELBUS_HOME` points clients at another instance. The CLI starts the
-daemon on demand for every command that needs it.
+socket. `MODELBUS_HOME` points clients at another instance.
+
+Nothing starts the daemon on its own. `modelbus start` installs it as a macOS login
+service (`~/Library/LaunchAgents/dev.modelbus.daemon.plist`: run at login, kept
+alive, this checkout's `serve` with the installer's PATH) and starts it; `stop`
+removes it; `restart` bounces it after a code change; `serve` runs it in the
+foreground instead. A client that finds no daemon says so and stops. The shim
+starts anyway, reports that on every tool call, and binds on the first call that
+gets through, so a session opened before the daemon is not stuck.
 
 ## 11. Limits (`core/limits.ts`)
 

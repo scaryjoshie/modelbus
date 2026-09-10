@@ -13,6 +13,9 @@ All committed on main. `architecture.md` describes the result; this is the list.
 - Providers hand back `Watch` handles; the manager owns and closes them.
 - `who` waits for the first discovery pass after startup.
 - `~/.modelbus` is 0700 with 0600 files, including the socket.
+- The daemon is a login service: `start` / `stop` / `restart` (macOS launchd,
+  installed only by the user's explicit `start`). Clients never start the daemon;
+  the on-demand spawn is gone. Secrets keeper in the runtime (owner-only files).
 - CLAUDE.md gained a "How we work" section at Joshua's request. Read it first.
 
 Decided for the next passes: a secrets keeper inside the daemon (owner-only files,

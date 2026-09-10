@@ -2,14 +2,14 @@
 import { parseArgs } from "node:util";
 import { type Identity, rpc } from "./client.ts";
 import { ensureHome } from "./core/paths.ts";
-import { ensureDaemon } from "./ensure.ts";
 import { parseToken, whoAmI } from "./identity.ts";
 import { allProviders } from "./providers/index.ts";
 import { renderItem } from "./render.ts";
 
 /**
  * modelbus CLI: a thin client of the daemon. Bus verbs live here; host-specific
- * setup plans are contributed by providers through `configure()`.
+ * setup plans are contributed by providers through `configure()`. Nothing here
+ * starts the daemon on its own: `start` is the user's explicit act.
  */
 
 const age = (ms?: number | null) => {
@@ -41,15 +41,35 @@ async function identityFor(values: { as?: string; token?: string }): Promise<Ide
 
 interface Command {
   usage: string;
-  /** Runs without the daemon (the CLI starts it for every other command). */
-  standalone?: boolean;
   run(args: string[]): Promise<void>;
 }
 
 const commands: Record<string, Command> = {
+  start: {
+    usage:
+      "start                                  install the daemon as a login service and start it",
+    async run() {
+      const { start } = await import("./service.ts");
+      for (const line of await start()) console.log(line);
+    },
+  },
+  stop: {
+    usage: "stop                                   stop the daemon and remove the login service",
+    async run() {
+      const { stop } = await import("./service.ts");
+      for (const line of await stop()) console.log(line);
+    },
+  },
+  restart: {
+    usage:
+      "restart                                restart the service's daemon (after a code change)",
+    async run() {
+      const { restart } = await import("./service.ts");
+      for (const line of await restart()) console.log(line);
+    },
+  },
   serve: {
-    standalone: true,
-    usage: "serve                                  run the daemon in the foreground",
+    usage: "serve                                  run the daemon in the foreground instead",
     async run() {
       const { createDaemon } = await import("./daemon.ts");
       ensureHome();
@@ -179,7 +199,6 @@ const commands: Record<string, Command> = {
     },
   },
   mcp: {
-    standalone: true,
     usage: "mcp [--with-sync]                      stdio MCP shim (spawned by hosts)",
     async run(args) {
       const { runMcpShim } = await import("./mcp.ts");
@@ -187,7 +206,6 @@ const commands: Record<string, Command> = {
     },
   },
   init: {
-    standalone: true,
     usage: "init [--write]                         show/apply host configuration",
     async run(args) {
       const plans = allProviders()
@@ -208,7 +226,7 @@ if (!cmd) {
   );
   process.exit(name === "help" ? 0 : 1);
 }
-(cmd.standalone ? cmd.run(args) : ensureDaemon().then(() => cmd.run(args))).catch((e) => {
+cmd.run(args).catch((e: unknown) => {
   console.error(e instanceof Error ? e.message : String(e));
   process.exit(1);
 });
