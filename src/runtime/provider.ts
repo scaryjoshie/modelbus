@@ -52,9 +52,9 @@ export interface Discovery {
 export interface Connector {
   /**
    * Put the message into the session, in whatever form the host takes. Call
-   * onReceipt later if the provider can observe the session consuming it.
+   * onRead later if the provider can observe the session taking it in.
    */
-  deliver(key: string, outbound: Outbound, onReceipt: () => void): Promise<DeliveryResult>;
+  deliver(key: string, outbound: Outbound, onRead: () => void): Promise<DeliveryResult>;
   /** Accept runtime information a session hands over about itself (secrets stay here). */
   attach?(key: string, info: Record<string, unknown>): void;
 }

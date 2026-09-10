@@ -57,7 +57,7 @@ export const messages = sqliteTable(
   "messages",
   {
     seq: integer("seq").primaryKey({ autoIncrement: true }),
-    /** Short random id; appears in the delivered text as the receipt marker. */
+    /** Short random id; appears in the delivered text as the mark providers watch for. */
     id: text("id").notNull().unique(),
     conversationId: text("conversation_id")
       .notNull()
@@ -71,7 +71,7 @@ export const messages = sqliteTable(
   (t) => [index("messages_conv_seq").on(t.conversationId, t.seq)],
 );
 
-/** One row per (message, recipient): its DeliveryStatus, and when it was received. */
+/** One row per (message, recipient): its DeliveryStatus, and when it was read. */
 export const deliveries = sqliteTable(
   "deliveries",
   {
@@ -81,15 +81,15 @@ export const deliveries = sqliteTable(
     toAgentId: text("to_agent_id")
       .notNull()
       .references(() => agents.id),
-    /** queued | received | failed */
-    status: text("status").notNull().default("queued"),
-    /** how it was queued, or why it failed */
+    /** sent | delivered | read | failed */
+    status: text("status").notNull().default("sent"),
+    /** why it is only sent, how it was delivered, or why it failed */
     detail: text("detail"),
-    receivedAt: integer("received_at"),
+    readAt: integer("read_at"),
   },
   (t) => [
     primaryKey({ columns: [t.messageId, t.toAgentId] }),
-    index("deliveries_inbox").on(t.toAgentId, t.receivedAt),
+    index("deliveries_inbox").on(t.toAgentId, t.readAt),
   ],
 );
 

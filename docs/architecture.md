@@ -22,7 +22,7 @@ src/
                discovery.ts (observe without registration),
                provider-manager.ts (reconciliation, presence, routing, roster)
   util/        ps.ts (process table, ancestors), watch.ts (transcript watcher, file events),
-               attribution.ts (default plain-text form of a message, and its receipt marker)
+               attribution.ts (default plain-text form of a message, and its read mark)
   providers/   one folder per host: index.ts (the class), the host's layout,
                configure.ts (what init writes); index.ts lists them
   daemon.ts    composition root: store + api + provider manager + providers + RPC method table
@@ -68,8 +68,8 @@ said. Presence is re-observed every few seconds and lives in the provider manage
 | `credentials` | registered agent | `secretHash` (sha-256 of its token secret), `createdAt`; the agent's auth secret, kept apart from its identity |
 | `conversations` | pair | `kind = dm`, `key = dm:<sorted ids>` so there is one DM per pair |
 | `participants` | conversation × agent | ready for groups |
-| `messages` | message | `seq` (global order), `id` (short random; the receipt marker), conversation, sender, body |
-| `deliveries` | message × recipient | `status` (queued / received / failed), `detail` (how queued, or why failed), `receivedAt` |
+| `messages` | message | `seq` (global order), `id` (short random; the read mark providers watch for), conversation, sender, body |
+| `deliveries` | message × recipient | `status` (sent / delivered / read / failed), `detail` (why only sent, how delivered, or why failed), `readAt` |
 
 Inbox state is per delivery row, not a per-agent cursor, so a scoped read or a
 send-and-wait consumes one conversation without skipping others.
@@ -113,7 +113,7 @@ Provider.host                           existing host namespace
 Provider.discovery?                     Discovery object
   observe()                             -> Observation[]
 Provider.connector?                     Connector object
-  deliver(key, outbound, onReceipt)      -> DeliveryResult
+  deliver(key, outbound, onRead)         -> DeliveryResult
   attach?(key, info)                     accept host runtime information
 Provider.identifySelf?()                 -> SelfIdentity | null
 Provider.configure?()                    -> ConfigurePlan
@@ -132,17 +132,24 @@ tokens, Aside's session-to-account map).
 
 `deliver` receives an `Outbound` (`core/delivery.ts`): the stored message row and
 the sender's agent row. Core does not render text. The connector chooses the host's
-form and, if it watches for receipts, its own marker. The three built-in providers
+form and, if it watches for the read mark, its own marker. The three built-in providers
 all take plain text, so each calls `util/attribution.ts` for the default form:
 `[modelbus #<id>] from <name>`, a blank line, the body unchanged; the marker is
 `#<id>`. A host with richer input would not use it.
 
-Delivery has three states per recipient. `send` returns after storage and the
-initial delivery attempt, or throws on refusal. After
-that each recipient's copy is `queued` (pushed into the host's queue, or waiting
-for a pull; `detail` says which), `received` (the session consumed it), or `failed`
-(the push failed; the recipient can still pull). A provider's `DeliveryResult` is
-`queued` or `failed`; `received` comes later through `onReceipt`.
+A message has four states per recipient. `send` returns after storage and the
+push attempt, or throws on refusal. After that each recipient's copy is `sent`
+(the daemon has it; nothing reached the recipient yet, `detail` says why), `delivered`
+(the push was accepted by the recipient's host), `read` (the host transcript shows
+it, or a pull returned it), or `failed` (the push was rejected; the recipient can
+still pull). A provider's `DeliveryResult` is `delivered` or `failed`; `read` comes
+later through `onRead`. "Pending", the sender holding a message the daemon has not
+stored, exists only inside a client.
+
+Two gaps, stated plainly. Between `delivered` and `read` the host can drop its
+copy (Claude Code exiting with the message still queued); the daemon keeps the
+message but nothing pushes it again. And a pull marks its items `read` as it hands
+them back, so a connection dropped mid-response leaves them marked read and unseen.
 
 ## 7. The provider manager (`runtime/provider-manager.ts`)
 
@@ -158,7 +165,7 @@ keeps its previous presence. An
 agent is live if its provider saw it on the last pass, or if it called in itself
 within the last ten minutes (`touch`, from `identify` and token use). `deliver()`
 routes to the agent's connector with its key; no provider or connector means
-`queued` with detail `waiting for it to sync`. `list()` is the roster, reachable first.
+`sent` with detail `waiting for it to sync`. `list()` is the roster, reachable first.
 Stopping the manager clears its interval; draining outstanding work and cancelling
 provider receipt watchers remain lifecycle work, as recorded in the design notes.
 
@@ -174,30 +181,30 @@ provider receipt watchers remain lifecycle work, as recorded in the design notes
 5. Delivery via the injected `deliver` (the provider manager's). Status stored on the row.
    If the recipient is blocked in send-and-wait for a reply from this sender, the
    message is returned through that call instead of pushed.
-6. Receipt is separate: the provider captured the host transcript's size before
+6. Read is separate: the provider captured the host transcript's size before
    delivering and watches it (file change events) for a line containing its
-   marker in the host's "user message" shape; then the row becomes `received`.
-   A pull marks its items received.
+   marker in the host's "user message" shape; then the row becomes `read`.
+   A pull marks its items read.
 7. With `wait`, the API blocks (up to 240 s) for the next message from the
    recipient in this DM and returns it inline.
 
-`pull { scope?, wait?, limit? }` returns unreceived deliveries (oldest first, cap
-50), marks them received, and reports `more` and `moreElsewhere`. It is the line
+`pull { scope?, wait?, limit? }` returns unread deliveries (oldest first, cap
+50), marks them read, and reports `more` and `moreElsewhere`. It is the line
 for pull-only recipients and the explicit catch-up (`sync`) for everyone else.
 
 ## 9. Hosts
 
-| Host | Key | Observe | Deliver | Receipt | `init` writes |
+| Host | Key | Observe | Deliver | Read | `init` writes |
 |---|---|---|---|---|---|
 | Claude Code | session id from `~/.claude/sessions/<pid>.json` | registry files with a live pid | post to the session's inbox socket via a short-lived helper, with the token if attached | `~/.claude/projects/.../<session>.jsonl`: `queue-operation remove` or a `user` entry | user settings: allow `mcp__modelbus__*`, SessionStart hook; `claude mcp add -s user` |
 | Codex | root thread id (lock files held by the process; classified by state DB `thread_source`, rollout header, or single-lock rule) | `codex` processes on a tty | `codex queue --thread <id>` | rollout `response_item` user message | `codex mcp add`; `[mcp_servers.modelbus.tools.<t>] approval_mode = "approve"` |
 | Aside | session id from `~/.aside/u/<N>/state.db` (account remembered in memory) | daemon health + state DB, last 7 days | `aside --account u<N> session queue <id>` | `~/.aside/u/<N>/sessions/<date>_<id>/messages.jsonl` user entry | each account's settings: `mcp.servers.modelbus` (env names the account) + cached tool inventory |
-| registered | minted non-secret key | none: live by contact | none: queued until the process pulls | on pull | none |
+| registered | minted non-secret key | none: live by contact | none: sent until the process pulls | on pull | none |
 
 Claude Code specifics: the token is consulted only if the posting process has
 exited, hence the helper (`providers/claude-code/post.ts`, run as its own process).
 Sessions started before `init`, or whose token the daemon has forgotten after a
-restart, are queued "no token" until they run `attach` or a new shim starts and
+restart, are delivered "no token" until they run `attach` or a new shim starts and
 attaches. An already-running shim does not re-attach on each tool call. Claude Code
 may ask the user before injecting without the token. The SessionStart hook
 is `modelbus attach`.

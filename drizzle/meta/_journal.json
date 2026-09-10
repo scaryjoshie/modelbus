@@ -8,6 +8,13 @@
       "when": 1788994108200,
       "tag": "0000_far_absorbing_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789014388772,
+      "tag": "0001_message_states",
+      "breakpoints": true
     }
   ]
 }

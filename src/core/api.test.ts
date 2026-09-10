@@ -103,12 +103,12 @@ describe("waiting", () => {
     }, 20);
     const r = await pending;
     expect(r.reply?.body).toBe("answer!");
-    // carol's message is still unreceived for alice
+    // carol's message is still unread for alice
     const rest = await api.pull({ agentId: a.id });
     expect(rest.items.map((i) => i.body)).toEqual(["unrelated from carol"]);
   });
 
-  test("scoped pull leaves other DMs unreceived", async () => {
+  test("scoped pull leaves other DMs unread", async () => {
     const { store, api, a, b } = fresh();
     const c = bindTest(store, "c", "carol");
     await api.send({ fromId: a.id, to: "bob", body: "from alice" });
@@ -146,7 +146,7 @@ describe("protocol", () => {
       const appClient = createClient(parseToken(app.token), unix);
       const otherClient = createClient(parseToken(other.token), unix);
       const sent = await otherClient.request("send", { to: "app", body: "hi app" });
-      expect(sent.delivery.status).toBe("queued");
+      expect(sent.delivery.status).toBe("sent");
       expect(sent.message.fromAgentId).toBe(other.agent.id);
       expect((await otherClient.request("pull", {})).items).toEqual([]);
       const pulled = await appClient.request("pull", {});
@@ -180,7 +180,7 @@ describe("protocol", () => {
     await rpc("bind", {}, bob, unix);
     const sent = await rpc("send", { to: "bob", body: "over the wire" }, alice, unix);
     expect(sent.to.name).toBe("bob");
-    expect(sent.delivery.status).toBe("queued");
+    expect(sent.delivery.status).toBe("sent");
     const who = await rpc("who", {}, undefined, unix);
     expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
     d.stop();
@@ -190,8 +190,8 @@ describe("protocol", () => {
     const pulled = await rpc("pull", {}, bob, unix);
     expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);
     const log = await rpc("log", {}, undefined, unix);
-    expect(log.rows[0]?.status).toBe("received");
-    expect(log.rows[0]?.receivedAt).not.toBeNull();
+    expect(log.rows[0]?.status).toBe("read");
+    expect(log.rows[0]?.readAt).not.toBeNull();
     d.stop();
   });
 });
@@ -203,7 +203,7 @@ describe("persistence", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  test("unreceived messages survive a store restart", async () => {
+  test("unread messages survive a store restart", async () => {
     const path = join(dir, "t.db");
     let store = new Store(path);
     let api = new Api(store);

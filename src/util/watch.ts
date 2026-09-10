@@ -7,7 +7,7 @@ export function fileOffset(path: string): number {
 
 /** If the transcript does not exist yet, look for it this often. */
 const EXISTS_POLL_MS = 1000;
-/** Stop watching for a receipt after this long. */
+/** Stop watching for the read mark after this long. */
 const GIVE_UP_MS = 15 * 60 * 1000;
 
 /**

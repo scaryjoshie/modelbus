@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { type DeliveryResult, failed, type Outbound, queued } from "../../core/delivery.ts";
+import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type { Observation, Provider } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
@@ -11,7 +11,7 @@ import { accounts, asideCli, daemonUp, isUserEntry, sessionsOf, transcriptPath }
  *
  * Identity: Aside's session record id. Stored indefinitely by Aside.
  * Delivery: `aside --account u<N> session queue <id> "<text>"`.
- * Receipt: the session's messages.jsonl records the queued text as a user entry.
+ * Read: the session's messages.jsonl records the queued text as a user entry.
  *
  * Outbound: Aside spawns one MCP shim per account, so a message an Aside session
  * sends is attributed to the account (`init` names it in the shim's environment).
@@ -57,7 +57,7 @@ export class AsideProvider implements Provider {
   private async deliver(
     sessionId: string,
     outbound: Outbound,
-    onReceipt: () => void,
+    onRead: () => void,
   ): Promise<DeliveryResult> {
     const { text, marker } = attributed(outbound);
     const account =
@@ -74,9 +74,8 @@ export class AsideProvider implements Provider {
       const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
       return failed(`aside session queue: ${err || "failed"}`);
     }
-    if (path)
-      watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onReceipt });
-    return queued("aside session queue");
+    if (path) watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onRead });
+    return delivered("aside session queue");
   }
 
   configure = configure;

@@ -109,11 +109,11 @@ export class ProviderManager {
   }
 
   /** Hand a message to the provider holding the agent's line. */
-  async deliver(agent: Agent, outbound: Outbound, onReceipt: () => void): Promise<DeliveryResult> {
+  async deliver(agent: Agent, outbound: Outbound, onRead: () => void): Promise<DeliveryResult> {
     const provider = this.providers.get(agent.host);
-    if (!provider?.connector) return { status: "queued", detail: "waiting for it to sync" };
+    if (!provider?.connector) return { status: "sent", detail: "waiting for it to sync" };
     try {
-      return await provider.connector.deliver(agent.hostKey, outbound, onReceipt);
+      return await provider.connector.deliver(agent.hostKey, outbound, onRead);
     } catch (e) {
       return { status: "failed", detail: e instanceof Error ? e.message : String(e) };
     }

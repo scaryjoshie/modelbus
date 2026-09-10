@@ -13,7 +13,7 @@ import type { Agent, InboxItem, Message, Store } from "./store.ts";
 export type Deliver = (
   to: Agent,
   outbound: Outbound,
-  onReceipt: () => void,
+  onRead: () => void,
 ) => Promise<DeliveryResult>;
 
 export class ApiError extends Error {}
@@ -26,7 +26,7 @@ interface MessageEvent {
 
 export class Api {
   private readonly events = new EventEmitter();
-  private deliver: Deliver = async () => ({ status: "queued", detail: "no push path" });
+  private deliver: Deliver = async () => ({ status: "sent", detail: "no push path" });
   /** conversation:replier pairs someone is currently blocked on inline. */
   private readonly waiting = new Set<string>();
 
@@ -74,10 +74,8 @@ export class Api {
     // A reply someone is blocked on inline is returned through that call, not also
     // pushed into their host (it would arrive twice).
     const delivery: DeliveryResult = this.waiting.has(`${conv.id}:${from.id}`)
-      ? { status: "queued", detail: "returned inline to the waiting sender" }
-      : await this.deliver(to, { message, from }, () =>
-          this.store.markReceived([message.id], to.id),
-        );
+      ? { status: "delivered", detail: "returned inline to the waiting sender" }
+      : await this.deliver(to, { message, from }, () => this.store.markRead([message.id], to.id));
     this.store.recordDelivery(message.id, to.id, delivery);
 
     const reply =
@@ -97,7 +95,7 @@ export class Api {
     const take = (): InboxItem | undefined => {
       const [m] = this.store.repliesAfter(conversationId, from.id, afterSeq);
       if (!m) return undefined;
-      this.store.markReceived([m.id], meId);
+      this.store.markRead([m.id], meId);
       return { ...m, fromName: from.name, fromHost: from.host };
     };
     const first = take();
@@ -133,12 +131,12 @@ export class Api {
 
     const take = () => {
       const items = this.store.inbox(me.id, { conversationId, limit });
-      this.store.markReceived(
+      this.store.markRead(
         items.map((i) => i.id),
         me.id,
       );
-      const more = this.store.countUnreceived(me.id, conversationId);
-      const moreElsewhere = conversationId ? this.store.countUnreceived(me.id) - more : 0;
+      const more = this.store.countUnread(me.id, conversationId);
+      const moreElsewhere = conversationId ? this.store.countUnread(me.id) - more : 0;
       return { items, more, moreElsewhere };
     };
     const first = take();

@@ -12,10 +12,10 @@ class FakeHost implements Provider {
   readonly connector = { deliver: this.deliver.bind(this) };
   live: Observation[] = [];
   delivered: Array<{ key: string; body: string }> = [];
-  async deliver(key: string, o: Outbound, onReceipt: () => void) {
+  async deliver(key: string, o: Outbound, onRead: () => void) {
     this.delivered.push({ key, body: o.message.body });
-    onReceipt();
-    return { status: "queued" as const };
+    onRead();
+    return { status: "delivered" as const };
   }
 }
 
@@ -73,7 +73,7 @@ describe("provider manager", () => {
     expect(await discover([provider])).toEqual([]);
     expect(manager.list().map((a) => a.id)).toEqual([agent.id]);
     expect((await manager.deliver(agent, outbound(agent, "hello"), () => {})).status).toBe(
-      "queued",
+      "delivered",
     );
     expect(host.delivered).toEqual([{ key: "direct", body: "hello" }]);
     store.close();
@@ -131,12 +131,12 @@ describe("provider manager", () => {
     await t.reconcile();
     const agent = store.agentByName("one");
     if (!agent) throw new Error("agent missing");
-    let receipt = false;
+    let read = false;
     const result = await t.deliver(agent, outbound(agent, "hello"), () => {
-      receipt = true;
+      read = true;
     });
-    expect(result.status).toBe("queued");
-    expect(receipt).toBe(true);
+    expect(result.status).toBe("delivered");
+    expect(read).toBe(true);
     expect(host.delivered).toEqual([{ key: "k1", body: "hello" }]);
   });
 
@@ -145,7 +145,7 @@ describe("provider manager", () => {
     const a = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
     expect(t.list().map((e) => `${e.name}:${e.note}`)).toEqual(["lonely:by sync"]);
     const result = await t.deliver(a, outbound(a, "hi"), () => undefined);
-    expect(result.status).toBe("queued");
+    expect(result.status).toBe("sent");
   });
 
   test("identify binds to the observed agent, not a new one", async () => {

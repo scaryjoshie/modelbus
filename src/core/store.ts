@@ -23,7 +23,7 @@ import {
  * The store: the only module that touches SQL. Everything else uses these methods.
  * Schema lives in schema.ts; migrations are applied on open.
  *
- * Inbox state is `deliveries.receivedAt`, not a per-agent cursor, so a scoped pull or
+ * Inbox state is `deliveries.readAt`, not a per-agent cursor, so a scoped pull or
  * a send(wait) can consume one DM without skipping others.
  */
 
@@ -41,7 +41,7 @@ export interface LogRow extends Message {
   toName: string;
   status: DeliveryStatus;
   detail: string | null;
-  receivedAt: number | null;
+  readAt: number | null;
 }
 
 /** Last resort when a thousand numbered names are taken. */
@@ -191,7 +191,7 @@ export class Store {
 
   // ---- messages & deliveries ---------------------------------------------
 
-  /** Insert a message and one unreceived delivery per other participant. */
+  /** Insert a message and one unread delivery per other participant. */
   insertMessage(conversationId: string, fromAgentId: string, body: string): Message {
     const id = newId();
     const now = Date.now();
@@ -211,9 +211,9 @@ export class Store {
     return this.db.select().from(messages).where(eq(messages.id, id)).get();
   }
 
-  /** Unreceived messages for an agent, oldest first, optionally in one conversation. */
+  /** Unread messages for an agent, oldest first, optionally in one conversation. */
   inbox(agentId: string, opts: { conversationId?: string; limit: number }): InboxItem[] {
-    const where = [eq(deliveries.toAgentId, agentId), isNull(deliveries.receivedAt)];
+    const where = [eq(deliveries.toAgentId, agentId), isNull(deliveries.readAt)];
     if (opts.conversationId) where.push(eq(messages.conversationId, opts.conversationId));
     return this.db
       .select({
@@ -235,8 +235,8 @@ export class Store {
       .all();
   }
 
-  countUnreceived(agentId: string, conversationId?: string): number {
-    const where = [eq(deliveries.toAgentId, agentId), isNull(deliveries.receivedAt)];
+  countUnread(agentId: string, conversationId?: string): number {
+    const where = [eq(deliveries.toAgentId, agentId), isNull(deliveries.readAt)];
     if (conversationId) where.push(eq(messages.conversationId, conversationId));
     const row = this.db
       .select({ n: count() })
@@ -247,22 +247,22 @@ export class Store {
     return row?.n ?? 0;
   }
 
-  markReceived(messageIds: string[], agentId: string): void {
+  markRead(messageIds: string[], agentId: string): void {
     if (!messageIds.length) return;
     this.db
       .update(deliveries)
-      .set({ status: "received", receivedAt: Date.now() })
+      .set({ status: "read", readAt: Date.now() })
       .where(
         and(
           inArray(deliveries.messageId, messageIds),
           eq(deliveries.toAgentId, agentId),
-          isNull(deliveries.receivedAt),
+          isNull(deliveries.readAt),
         ),
       )
       .run();
   }
 
-  /** Record a push result. Never downgrades a delivery already received. */
+  /** Record a push result. Never downgrades a delivery already read. */
   recordDelivery(messageId: string, agentId: string, result: DeliveryResult): void {
     this.db
       .update(deliveries)
@@ -271,7 +271,7 @@ export class Store {
         and(
           eq(deliveries.messageId, messageId),
           eq(deliveries.toAgentId, agentId),
-          isNull(deliveries.receivedAt),
+          isNull(deliveries.readAt),
         ),
       )
       .run();
@@ -330,7 +330,7 @@ export class Store {
       SELECT m.seq, m.id, m.conversation_id AS conversationId, m.from_agent_id AS fromAgentId,
              m.body, m.created_at AS createdAt,
              fa.name AS fromName, ta.name AS toName,
-             d.status, d.detail, d.received_at AS receivedAt
+             d.status, d.detail, d.read_at AS readAt
       FROM messages m
       JOIN agents fa ON fa.id = m.from_agent_id
       JOIN deliveries d ON d.message_id = m.id

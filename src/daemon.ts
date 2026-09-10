@@ -125,7 +125,7 @@ export function createDaemon(
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store);
   const providerManager = new ProviderManager(store, opts.providers ?? allProviders());
-  api.setDeliver((to, outbound, onReceipt) => providerManager.deliver(to, outbound, onReceipt));
+  api.setDeliver((to, outbound, onRead) => providerManager.deliver(to, outbound, onRead));
   if (opts.track !== false) providerManager.start();
   const methods: Record<string, AnyMethod> = buildMethods(store, api, providerManager);
 

@@ -73,9 +73,15 @@ local POC protocol is not yet an authenticated cloud/provider-delegation protoco
 | `who` | `{filter?, fresh?}` | no | `{agents: RosterEntry[]}` |
 | `log` | `{a?, b?}` | no | `{rows}` |
 
-`delivery.status` is `queued` (the recipient's host has it, or it waits for a pull;
-`detail` says which) or `failed` (the push failed; `detail` says why). `received`
-appears later in `log`. Errors come back as HTTP 4xx/5xx with `{error}`; 422 means
+`delivery.status` is `sent` (the daemon has it and nothing reached the recipient
+yet; `detail` says why), `delivered` (the recipient's host accepted the push), or
+`failed` (the push was rejected; `detail` says why). `read` appears later in `log`,
+when the host transcript shows the message or a pull returns it.
+
+Two things this protocol does not yet guarantee. A message can sit `delivered`
+forever if the host drops its copy; nothing pushes it again. And `pull` marks
+items `read` as it returns them, so if the connection drops before the response
+arrives, those items are marked read and were never seen. Errors come back as HTTP 4xx/5xx with `{error}`; 422 means
 the request was refused by a guard or a name lookup.
 
 From TypeScript, `src/client.ts` exports `rpc(method, params, identity?)` typed

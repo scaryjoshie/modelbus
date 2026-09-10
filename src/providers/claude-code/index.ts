@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { type DeliveryResult, failed, type Outbound, queued } from "../../core/delivery.ts";
+import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { listProcesses } from "../../util/ps.ts";
@@ -19,7 +19,7 @@ import { currentSession, liveSessions } from "./registry.ts";
  * dialog in any permission mode. Without it the session's inbound rules decide,
  * which may mean a dialog for the user. Tokens are kept in memory only.
  *
- * Receipt: a transcript entry containing the marker, either `queue-operation`
+ * Read: a transcript entry containing the marker, either `queue-operation`
  * `remove` (queued mid-turn) or a `user` entry (attached to a turn).
  */
 
@@ -84,7 +84,7 @@ export class ClaudeCodeProvider implements Provider {
   private async deliver(
     sessionId: string,
     outbound: Outbound,
-    onReceipt: () => void,
+    onRead: () => void,
   ): Promise<DeliveryResult> {
     const a = this.attached.get(sessionId) ?? {};
     const reg = liveSessions().find((s) => s.sessionId === sessionId);
@@ -101,12 +101,12 @@ export class ClaudeCodeProvider implements Provider {
         marker,
         fromOffset,
         accept: isDelivered,
-        onFound: onReceipt,
+        onFound: onRead,
       });
     }
     return a.token
-      ? queued("inbox socket, with token")
-      : queued("inbox socket, no token: the session may ask its user");
+      ? delivered("inbox socket, with token")
+      : delivered("inbox socket, no token: the session may ask its user");
   }
 
   configure = configure;
