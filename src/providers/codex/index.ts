@@ -1,5 +1,5 @@
-import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
-import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
+import { delivered, failed, type Outbound } from "../../core/delivery.ts";
+import type { Delivered, Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { ancestors, cwdOf, listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
@@ -76,7 +76,7 @@ export class CodexProvider implements Provider {
     threadId: string,
     outbound: Outbound,
     onRead: () => void,
-  ): Promise<DeliveryResult> {
+  ): Promise<Delivered> {
     const { text, marker } = attributed(outbound);
     const meta = threadMeta(threadId);
     const fromOffset = meta.rolloutPath ? fileOffset(meta.rolloutPath) : 0;
@@ -86,18 +86,18 @@ export class CodexProvider implements Provider {
     });
     if ((await proc.exited) !== 0) {
       const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
-      return failed(`codex queue: ${err || "failed"}`);
+      return { result: failed(`codex queue: ${err || "failed"}`) };
     }
-    if (meta.rolloutPath) {
-      watchTranscript({
-        path: meta.rolloutPath,
-        marker,
-        fromOffset,
-        accept: isUserMessage,
-        onFound: onRead,
-      });
-    }
-    return delivered("codex queue");
+    const watch = meta.rolloutPath
+      ? watchTranscript({
+          path: meta.rolloutPath,
+          marker,
+          fromOffset,
+          accept: isUserMessage,
+          onFound: onRead,
+        })
+      : undefined;
+    return { result: delivered("codex queue"), watch };
   }
 
   configure = configure;

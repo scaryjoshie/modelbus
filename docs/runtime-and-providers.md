@@ -272,10 +272,12 @@ Provider operations may need local protocol timeouts, watchers, or keepalives. E
 ongoing activity needs a cancellable owner; a single global timer is not required.
 Avoid a general scheduler until actual tasks justify it. Models do not poll.
 
-Current debt: receipt watchers return cleanup functions that providers do not yet
-retain; stopping the manager clears its interval but does not drain outstanding
-operations. A proper cancellation/shutdown pass needs to cover both before claiming
-that all provider work is supervised. This cleanup changes contracts, not lifecycle.
+Settled 2026-09-10 (Joshua): a provider is something the runtime uses, not a
+process that runs itself. Anything a provider starts comes back to the caller as a
+handle; the runtime owns every handle and closes them on shutdown. Implemented for
+transcript watches (`Watch` in `util/watch.ts`, `Delivered` in the connector
+contract). Cancelling an in-flight call from outside, if ever needed, would be a
+signal passed in, kept separate from ownership of long-lived work.
 
 ## Questions to work through
 

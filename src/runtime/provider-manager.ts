@@ -1,5 +1,6 @@
 import type { DeliveryResult, Outbound } from "../core/delivery.ts";
 import type { Agent, Store } from "../core/store.ts";
+import type { Watch } from "../util/watch.ts";
 import { discover } from "./discovery.ts";
 import type { Provider } from "./provider.ts";
 
@@ -42,6 +43,8 @@ export class ProviderManager {
   private readonly contact = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight: Promise<void> | undefined;
+  /** Watches providers started on our behalf and have not finished. */
+  private readonly open = new Set<Watch>();
 
   constructor(
     readonly store: Store,
@@ -55,8 +58,17 @@ export class ProviderManager {
     this.timer = setInterval(() => void this.reconcile(), intervalMs);
   }
 
+  /** Clear the timer and close every watch still running. */
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    for (const w of this.open) w[Symbol.dispose]();
+    this.open.clear();
+  }
+
+  /** Number of watches still running; for tests and diagnostics. */
+  get watching(): number {
+    return this.open.size;
   }
 
   /** One pass over every provider. Concurrent calls share the in-flight pass. */
@@ -113,7 +125,12 @@ export class ProviderManager {
     const provider = this.providers.get(agent.host);
     if (!provider?.connector) return { status: "sent", detail: "waiting for it to sync" };
     try {
-      return await provider.connector.deliver(agent.hostKey, outbound, onRead);
+      const { result, watch } = await provider.connector.deliver(agent.hostKey, outbound, onRead);
+      if (watch) {
+        this.open.add(watch);
+        void watch.done.then(() => this.open.delete(watch));
+      }
+      return result;
     } catch (e) {
       return { status: "failed", detail: e instanceof Error ? e.message : String(e) };
     }

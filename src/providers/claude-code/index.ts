@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
-import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
+import { delivered, failed, type Outbound } from "../../core/delivery.ts";
+import type { Delivered, Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
@@ -85,28 +85,29 @@ export class ClaudeCodeProvider implements Provider {
     sessionId: string,
     outbound: Outbound,
     onRead: () => void,
-  ): Promise<DeliveryResult> {
+  ): Promise<Delivered> {
     const a = this.attached.get(sessionId) ?? {};
     const reg = liveSessions().find((s) => s.sessionId === sessionId);
     const socketPath = a.socketPath ?? reg?.socketPath;
     const transcriptPath = a.transcriptPath ?? reg?.transcriptPath;
-    if (!socketPath) return failed("no inbox socket");
-    if (!existsSync(socketPath)) return failed("inbox socket missing");
+    if (!socketPath) return { result: failed("no inbox socket") };
+    if (!existsSync(socketPath)) return { result: failed("inbox socket missing") };
     const { text, marker } = attributed(outbound);
     const fromOffset = transcriptPath ? fileOffset(transcriptPath) : 0;
     await postViaHelper(socketPath, a.token, text);
-    if (transcriptPath) {
-      watchTranscript({
-        path: transcriptPath,
-        marker,
-        fromOffset,
-        accept: isDelivered,
-        onFound: onRead,
-      });
-    }
-    return a.token
+    const watch = transcriptPath
+      ? watchTranscript({
+          path: transcriptPath,
+          marker,
+          fromOffset,
+          accept: isDelivered,
+          onFound: onRead,
+        })
+      : undefined;
+    const result = a.token
       ? delivered("inbox socket, with token")
       : delivered("inbox socket, no token: the session may ask its user");
+    return { result, watch };
   }
 
   configure = configure;

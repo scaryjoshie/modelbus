@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Outbound } from "../core/delivery.ts";
 import type { Agent } from "../core/store.ts";
 import { Store } from "../core/store.ts";
+import type { Watch } from "../util/watch.ts";
 import { discover } from "./discovery.ts";
 import type { Observation, Provider } from "./provider.ts";
 import { ProviderManager } from "./provider-manager.ts";
@@ -12,10 +13,12 @@ class FakeHost implements Provider {
   readonly connector = { deliver: this.deliver.bind(this) };
   live: Observation[] = [];
   delivered: Array<{ key: string; body: string }> = [];
+  /** Set to hand the manager a watch with each delivery. */
+  watch: Watch | undefined;
   async deliver(key: string, o: Outbound, onRead: () => void) {
     this.delivered.push({ key, body: o.message.body });
     onRead();
-    return { status: "delivered" as const };
+    return { result: { status: "delivered" as const }, watch: this.watch };
   }
 }
 
@@ -155,6 +158,38 @@ describe("provider manager", () => {
     const a = t.identify({ host: "fake", key: "k1", name: "one" });
     expect(t.list()[0]?.id).toBe(a.id);
     expect(t.list()).toHaveLength(1);
+  });
+
+  test("the manager owns watches: drops finished ones, closes the rest on stop", async () => {
+    const { store, host, t } = setup();
+    host.live = [obs("k1", "one")];
+    await t.reconcile();
+    const a = store.agentByName("one");
+    if (!a) throw new Error("agent missing");
+
+    let finish: () => void = () => undefined;
+    let closed = 0;
+    const finishes: Watch = {
+      done: new Promise((r) => {
+        finish = r;
+      }),
+      [Symbol.dispose]: () => closed++,
+    };
+    const lingers: Watch = { done: new Promise(() => {}), [Symbol.dispose]: () => closed++ };
+
+    host.watch = finishes;
+    await t.deliver(a, outbound(a, "one"), () => undefined);
+    host.watch = lingers;
+    await t.deliver(a, outbound(a, "two"), () => undefined);
+    expect(t.watching).toBe(2);
+
+    finish();
+    await Promise.resolve();
+    expect(t.watching).toBe(1);
+
+    t.stop();
+    expect(closed).toBe(1); // only the lingering watch needed closing
+    expect(t.watching).toBe(0);
   });
 
   test("a failing provider keeps its last presence", async () => {

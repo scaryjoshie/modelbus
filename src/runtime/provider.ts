@@ -1,4 +1,5 @@
 import type { DeliveryResult, Outbound } from "../core/delivery.ts";
+import type { Watch } from "../util/watch.ts";
 
 /**
  * The runtime's contract with a host integration. Core does not consume it.
@@ -49,12 +50,20 @@ export interface Discovery {
   observe(): Promise<Observation[]>;
 }
 
+/** What a push produced, plus anything the provider left running for it. */
+export interface Delivered {
+  result: DeliveryResult;
+  /** A watch for the read mark, if one was started. The caller owns and closes it. */
+  watch?: Watch;
+}
+
 export interface Connector {
   /**
    * Put the message into the session, in whatever form the host takes. Call
-   * onRead later if the provider can observe the session taking it in.
+   * onRead later if the provider can observe the session taking it in. The
+   * provider keeps nothing running; whatever it starts comes back as `watch`.
    */
-  deliver(key: string, outbound: Outbound, onRead: () => void): Promise<DeliveryResult>;
+  deliver(key: string, outbound: Outbound, onRead: () => void): Promise<Delivered>;
   /** Accept runtime information a session hands over about itself (secrets stay here). */
   attach?(key: string, info: Record<string, unknown>): void;
 }

@@ -113,7 +113,7 @@ Provider.host                           existing host namespace
 Provider.discovery?                     Discovery object
   observe()                             -> Observation[]
 Provider.connector?                     Connector object
-  deliver(key, outbound, onRead)         -> DeliveryResult
+  deliver(key, outbound, onRead)         -> { result: DeliveryResult, watch?: Watch }
   attach?(key, info)                     accept host runtime information
 Provider.identifySelf?()                 -> SelfIdentity | null
 Provider.configure?()                    -> ConfigurePlan
@@ -166,8 +166,11 @@ agent is live if its provider saw it on the last pass, or if it called in itself
 within the last ten minutes (`touch`, from `identify` and token use). `deliver()`
 routes to the agent's connector with its key; no provider or connector means
 `sent` with detail `waiting for it to sync`. `list()` is the roster, reachable first.
-Stopping the manager clears its interval; draining outstanding work and cancelling
-provider receipt watchers remain lifecycle work, as recorded in the design notes.
+
+Providers keep nothing running. A `deliver` that starts a transcript watch hands it
+back as a `Watch` (`util/watch.ts`: closable, with a `done` promise). The manager
+keeps every open watch, drops each as it finishes, and closes the rest in `stop()`
+along with its own timer. This is the disposable-out shape plugin hosts use.
 
 ## 8. A send, end to end (`core/api.ts`)
 

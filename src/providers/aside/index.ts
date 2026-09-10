@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
-import type { Observation, Provider } from "../../runtime/provider.ts";
+import { delivered, failed, type Outbound } from "../../core/delivery.ts";
+import type { Delivered, Observation, Provider } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
@@ -58,12 +58,12 @@ export class AsideProvider implements Provider {
     sessionId: string,
     outbound: Outbound,
     onRead: () => void,
-  ): Promise<DeliveryResult> {
+  ): Promise<Delivered> {
     const { text, marker } = attributed(outbound);
     const account =
       this.accountOf.get(sessionId) ?? accounts().find((a) => transcriptPath(a, sessionId));
-    if (account === undefined) return failed("account for session not found");
-    if (!existsSync(asideCli())) return failed("aside cli not installed");
+    if (account === undefined) return { result: failed("account for session not found") };
+    if (!existsSync(asideCli())) return { result: failed("aside cli not installed") };
     const path = transcriptPath(account, sessionId);
     const fromOffset = path ? fileOffset(path) : 0;
     const proc = Bun.spawn(
@@ -72,10 +72,12 @@ export class AsideProvider implements Provider {
     );
     if ((await proc.exited) !== 0) {
       const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
-      return failed(`aside session queue: ${err || "failed"}`);
+      return { result: failed(`aside session queue: ${err || "failed"}`) };
     }
-    if (path) watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onRead });
-    return delivered("aside session queue");
+    const watch = path
+      ? watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onRead })
+      : undefined;
+    return { result: delivered("aside session queue"), watch };
   }
 
   configure = configure;

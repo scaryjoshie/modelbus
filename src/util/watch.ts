@@ -11,6 +11,15 @@ const EXISTS_POLL_MS = 1000;
 const GIVE_UP_MS = 15 * 60 * 1000;
 
 /**
+ * A watch in progress. Whoever holds it owns it: close it with `[Symbol.dispose]`,
+ * or await `done`, which settles when the watch stops for any reason (found,
+ * gave up, or closed).
+ */
+export interface Watch extends Disposable {
+  readonly done: Promise<void>;
+}
+
+/**
  * Watch an append-only transcript for a line containing `marker` that `accept`s,
  * reading from `fromOffset` (capture it before delivering). Uses file change
  * events; polls only while the file does not exist yet. Calls `onFound` once.
@@ -22,10 +31,14 @@ export function watchTranscript(opts: {
   onFound: () => void;
   fromOffset?: number;
   timeoutMs?: number;
-}): () => void {
+}): Watch {
   let offset = opts.fromOffset ?? fileOffset(opts.path);
   let watcher: ReturnType<typeof watch> | undefined;
   let poll: ReturnType<typeof setTimeout> | undefined;
+  let settle: () => void = () => undefined;
+  const done = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
   const giveUp = setTimeout(() => stop(), opts.timeoutMs ?? GIVE_UP_MS);
 
   const stop = () => {
@@ -33,6 +46,7 @@ export function watchTranscript(opts: {
     if (poll) clearTimeout(poll);
     watcher?.close();
     watcher = undefined;
+    settle();
   };
 
   const check = () => {
@@ -65,5 +79,5 @@ export function watchTranscript(opts: {
     check();
   };
   start();
-  return stop;
+  return { done, [Symbol.dispose]: stop };
 }
