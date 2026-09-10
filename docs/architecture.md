@@ -31,6 +31,8 @@ src/
   identity.ts  "who am I" for shim/CLI
   service.ts   the daemon as a login service      render.ts    one-line message text
   web.ts       the MCP door for web chats (HTTP on localhost; a tunnel exposes it)
+  tui/         `modelbus tui`: a keyboard-driven view of agents and messages over the RPC;
+               imports only client.ts (enforced); docs/tui/ has the research and plan
   cli.ts       command table
   mcp.ts       the stdio MCP shim hosts spawn per session
 scripts/check-layers.ts   fails the build on layering violations

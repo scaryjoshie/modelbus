@@ -215,10 +215,10 @@ const commands: Record<string, Command> = {
       console.log(`modelbus web on ${w.url}; expose it with a tunnel to reach it from the web`);
     },
   },
-  top: {
-    usage: "top                                    live view of agents and messages (temporary)",
+  tui: {
+    usage: "tui                                    live view of agents and messages",
     async run() {
-      const { runTui } = await import("./tui.ts");
+      const { runTui } = await import("./tui/index.ts");
       await runTui();
     },
   },

@@ -38,7 +38,8 @@ export async function rpc<M extends MethodName>(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method, params, identity }),
     });
-  } catch (e) {
+  } catch {
+    // Any connection failure means the same thing to a client: the daemon is not up.
     throw new DaemonUnreachable(`modelbus is not running (${unix}); start it with: modelbus start`);
   }
   const data = (await res.json()) as { error?: string } & Result<M>;

@@ -18,6 +18,10 @@ All committed on main. `architecture.md` describes the result; this is the list.
   the on-demand spawn is gone. Secrets keeper in the runtime (owner-only files).
 - Redelivery: `sent` and `failed` messages are pushed again when their recipient
   becomes reachable (manager notices the transition, calls core's `redeliver`).
+- `modelbus tui`: a keyboard-driven view (agents, detail, log, filter, help) in
+  `src/tui/`, no dependencies, importing only the RPC client. Built by an agent
+  team from the research in `docs/tui/`; `docs/tui/plan.md` is the contract.
+  Read-only over the bus: sending from it needs a decision on the person's identity.
 - CLAUDE.md gained a "How we work" section at Joshua's request. Read it first.
 
 Decided for the next passes: a secrets keeper inside the daemon (owner-only files,

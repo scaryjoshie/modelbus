@@ -17,6 +17,7 @@ bun run src/cli.ts init --write  # apply host configuration
 bun run src/cli.ts start         # run the daemon as a login service (macOS); `serve` runs it in the foreground
 bun run src/cli.ts who
 bun run src/cli.ts send --to <name> "text"
+bun run src/cli.ts tui           # live view of agents and messages; ? for keys, q to quit
 ```
 
 Nothing starts the daemon for you; `start` is the one explicit act, `stop` undoes
