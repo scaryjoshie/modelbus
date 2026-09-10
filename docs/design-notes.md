@@ -68,7 +68,7 @@ directions through the bus with nothing appearing on screen.
 
 ### Prior art
 
-`docs/host-adapter-inventory-and-bus-design.md` is the research report this started
+`docs/host-inventory-and-bus-design.md` is the research report this started
 from. Key conclusion: only Claude Code has a real push-into-session primitive and it is
 unreliable, so the hub must be pull-first with push layered per host.
 

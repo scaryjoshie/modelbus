@@ -301,7 +301,8 @@ The sections above contain the direction and constraints for each item.
 
 ## What this pass implements
 
-- `adapters/` becomes `providers/`; `Tracker` becomes runtime `ProviderManager`.
+- The former `src/adapters/` folder is now `src/providers/`; nothing named
+  "adapter" remains in the code. `Tracker` becomes runtime `ProviderManager`.
 - Runtime owns `Provider`, `Discovery`, `Connector`, and setup/identity contracts.
 - Providers expose separate optional discovery and connector objects.
 - `discover(providers)` returns observed/failed results independently of registration.

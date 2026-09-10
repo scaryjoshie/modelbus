@@ -53,4 +53,4 @@ to open the test sockets.
 - [Handoff](docs/handoff.md): status and operational findings.
 - [POC spec](docs/poc-spec.md) and [design notes](docs/design-notes.md): historical
   milestones and exploration; newer decisions are linked at the top.
-- [Host research](docs/host-adapter-inventory-and-bus-design.md): the original survey.
+- [Host research](docs/host-inventory-and-bus-design.md): the original survey.
