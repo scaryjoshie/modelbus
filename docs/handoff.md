@@ -1,4 +1,23 @@
-# Handoff (written 2026-09-08, updated 2026-09-09, by the Claude session that built the POC)
+# Handoff (written 2026-09-08, updated 2026-09-10)
+
+## September 9 and 10 cleanup passes (Claude, with Joshua)
+
+All committed on main. `architecture.md` describes the result; this is the list.
+
+- Core hands connectors an `Outbound` (message row + sender row), not text. Each
+  provider renders its own host text through `util/attribution.ts`.
+- Message states are `sent` / `delivered` / `read` / `failed` (migration 0001,
+  verified on a copy of the live database before restarting).
+- Core addresses agents by id; the daemon's method table resolves names.
+- Limits are an options object with exported defaults (`core/limits.ts`).
+- Providers hand back `Watch` handles; the manager owns and closes them.
+- `who` waits for the first discovery pass after startup.
+- `~/.modelbus` is 0700 with 0600 files, including the socket.
+- CLAUDE.md gained a "How we work" section at Joshua's request. Read it first.
+
+Decided for the next passes: a secrets keeper inside the daemon (owner-only files,
+no keychain) that providers register secrets with, starting with Claude's session
+tokens; then redelivery of unread messages when a session reappears.
 
 ## September 9 runtime/provider cleanup (Codex)
 
@@ -20,10 +39,10 @@
   Restart a source-running daemon to load the renamed modules; an old daemon may
   still refer to the moved Claude posting helper. Restart also forgets its in-memory
   Claude tokens, so affected sessions need `attach` or a new shim afterward.
-- 22 tests pass, including independent discovery, connector-only providers, and
+- 22 tests passed at the time, including independent discovery, connector-only providers, and
   identity separation with bound clients. Socket tests need execution outside
   Codex's shell sandbox. Type, formatting, and layering checks also pass.
-- Changes are local for review; this pass did not commit or push.
+- Committed on 2026-09-09 as "Runtime layer: providers replace adapters".
 
 ## Earlier POC handoff (historical)
 
