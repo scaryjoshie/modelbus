@@ -9,7 +9,8 @@ import { join, relative } from "node:path";
  *   helpers   src/util/**            may import: nothing else in src
  *   runtime   src/runtime/**         may import: core, util, runtime
  *   providers src/providers/**       may import: own folder, runtime contract, delivery, paths, util
- *   clients   cli, mcp, web, tui, identity, client, service, render, daemon: anything
+ *   tui       src/tui/**             may import: tui, client (the daemon's RPC and nothing else)
+ *   clients   cli, mcp, web, identity, client, service, render, daemon: anything
  *
  * Fails with a list of violations. Run as part of `bun run check`.
  */
@@ -23,6 +24,11 @@ const rules: Array<{ name: string; test: (f: string) => boolean; allow: (t: stri
       name: "runtime",
       test: (f) => f.startsWith("runtime/"),
       allow: (t) => t.startsWith("core/") || t.startsWith("util/") || t.startsWith("runtime/"),
+    },
+    {
+      name: "tui",
+      test: (f) => f.startsWith("tui/"),
+      allow: (t) => t.startsWith("tui/") || t === "client.ts",
     },
   ];
 
