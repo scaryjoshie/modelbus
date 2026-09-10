@@ -205,6 +205,16 @@ const commands: Record<string, Command> = {
       await runMcpShim({ withSync: args.includes("--with-sync") });
     },
   },
+  web: {
+    usage:
+      "web [--port N]                         serve the MCP door for web chats on localhost (default 8787)",
+    async run(args) {
+      const { values } = parseArgs({ args, options: { port: { type: "string" } } });
+      const { serveWeb } = await import("./web.ts");
+      const w = serveWeb({ port: values.port ? Number(values.port) : 8787 });
+      console.log(`modelbus web on ${w.url}; expose it with a tunnel to reach it from the web`);
+    },
+  },
   init: {
     usage: "init [--write]                         show/apply host configuration",
     async run(args) {

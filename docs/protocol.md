@@ -106,6 +106,14 @@ Registration, host configuration, and discovery are independent operations.
 prove an unverified `self` identity. `send` accepts a recipient and body; its sender
 is supplied by the runtime after identity resolution.
 
+## From a web chat
+
+`modelbus web` serves the same idea over HTTP for chats on claude.ai or ChatGPT:
+`join { name }` registers the chat and returns its id; `send`, `sync`, and `who`
+take that id as `as`. The chat repeats an id, never a secret. Expose the endpoint
+with a tunnel and add it to the service as a custom connector. A web chat cannot
+be woken: it receives when it calls `sync` or waits on a `send`.
+
 ## As an MCP server
 
 Any MCP-capable host can run `modelbus mcp` as a stdio server with `MODELBUS_TOKEN`

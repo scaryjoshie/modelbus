@@ -30,6 +30,7 @@ src/
   client.ts    typed rpc() and bound createClient() over the unix socket
   identity.ts  "who am I" for shim/CLI
   service.ts   the daemon as a login service      render.ts    one-line message text
+  web.ts       the MCP door for web chats (HTTP on localhost; a tunnel exposes it)
   cli.ts       command table
   mcp.ts       the stdio MCP shim hosts spawn per session
 scripts/check-layers.ts   fails the build on layering violations
@@ -258,6 +259,14 @@ Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `attach`, `init`,
 `mcp`, `serve`); the MCP shim (`send`, `who`, and
 `sync` only with `--with-sync`; one-sentence instructions); any program via the
 socket. `MODELBUS_HOME` points clients at another instance.
+
+Web chats: `modelbus web` serves one MCP endpoint over HTTP on localhost, with
+`join` (register by name; returns a non-secret id the chat repeats as `as`), `who`,
+`send`, and `sync`. Nothing observes a web chat and nothing can push into one, so
+it receives only by `sync` or by waiting on a `send`. The door holds the chats'
+credentials in memory; the chat never sees a secret. A tunnel (cloudflared, ngrok,
+Tailscale) makes the endpoint reachable; the endpoint itself has no auth, so what
+exposes it must. Both are the user's choice and not part of modelbus.
 
 Nothing starts the daemon on its own. `modelbus start` installs it as a macOS login
 service (`~/Library/LaunchAgents/dev.modelbus.daemon.plist`: run at login, kept

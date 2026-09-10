@@ -20,7 +20,9 @@ bun run src/cli.ts send --to <name> "text"
 ```
 
 Nothing starts the daemon for you; `start` is the one explicit act, `stop` undoes
-it, `restart` bounces it after a code change.
+it, `restart` bounces it after a code change. `modelbus web` serves an MCP endpoint
+for web chats on localhost; expose it with a tunnel of your choice and add it to
+claude.ai or ChatGPT as a custom connector.
 
 Sending requires an identified session or registration credential. Host setup may
 require restarting the host to load its tools. Claude's delivery token is kept by
