@@ -201,6 +201,42 @@ Provider-private secrets are distinct from user-visible settings, and from core'
 data: they never share core's database. The runtime owns the bytes and the file
 permissions; each provider owns the meaning of what it stores.
 
+## Secrets: what was considered (2026-09-10)
+
+What exists: a `Secrets` interface in the provider contract (get, set, delete,
+list); one runtime file implementing it as one owner-only JSON file per provider
+under `~/.modelbus/secrets/`, replaced whole through a temp file and rename; the
+daemon hands each provider its own at construction; Claude's provider keeps session
+tokens there by session id and forgets them when the session is gone. Core has no
+part in it. Joshua may revisit; it is not a priority. The alternatives, and why not:
+
+- **OS keychain / Linux Secret Service.** Mac-specific; prompts for programs run
+  from source or rebuilt; on Linux any program in the session can read everything
+  once unlocked; adds nothing against another program running as the same user,
+  which can already read the token from a session's environment. Joshua: not trusted.
+- **A `secrets` table in core's database via the store.** Built, then reverted
+  before commit. It put host secrets in core's schema and made the runtime import
+  the store. Rule, stated by Joshua: core's tables and secrets never share a
+  database, and the keeper imports nothing from core.
+- **A package.** `conf` brings ajv and friends for four methods; `keytar` is
+  archived; `@napi-rs/keyring` is the keychain. None worth a dependency.
+- **One file per secret.** Needs filename validation and per-file writes for no
+  benefit over one file per provider at this size.
+- **Each provider writing its own file.** Every provider reimplements permissions
+  and atomic writes, and the daemon cannot list or clean up what exists.
+- **The runtime persisting whatever `attach` hands it.** Stores non-secrets, and
+  takes the decision of what to keep away from the provider that understands it.
+- **The manager telling providers which sessions vanished.** One owner of session
+  lifetime, but a new contract method for a single user. Forgetting stays in the
+  provider, which is handed what it needs and then does its own thing.
+- **Encryption at rest.** Would need a key, which would need storing; the OS
+  keychain solves that with the login password and we declined the keychain.
+  FileVault covers the disk. Protection here is file permissions.
+
+Still open: a setting to turn token capture off (waits for settings), and whether
+a token stays valid across `claude --resume` (untested; the start hook re-attaches
+either way).
+
 ## Artifacts and a temporary file board
 
 Motivating example: a web chat writes `briefing.md`, publishes it to a temporary
