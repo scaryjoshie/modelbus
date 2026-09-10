@@ -30,6 +30,33 @@ The runtime owns the provider contract; providers never import core API/store or
 runtime implementations. Discovery and communication are separate capabilities.
 Grouping operations in a provider does not force them to run together.
 
+## How we work
+
+Every addition is deliberate. Before adding anything, say what it is for and what
+would consume it today. This is the working method, not a preference:
+
+- Extract the core of a need before designing for it. Ask what the thing *is*,
+  apart from its first use case. Identity is not proof; a line is not a host;
+  observing a session is not registering it. Keep distinct concepts distinct even
+  when one class happens to hold both.
+- A shared contract carries facts, not decisions. The consumer chooses
+  presentation, policy, and behavior. The test: does this assume the consumer will
+  use it one particular way? If so, hand over the data and let them decide.
+- Nothing speculative. No field nothing reads, no hook nothing calls, no framework
+  for a second case that does not exist. Generalize when the second consumer
+  arrives, not before.
+- Names mean what they guarantee. When a name overpromises, prefer renaming it or
+  documenting the real guarantee to adding machinery that makes the name true.
+- Say exactly what will be implemented before implementing it: a short list of what
+  changes and what is explicitly left out. Docs separate *as built* from
+  *direction* from *open*. A proposed interface never reads as a decision.
+- Open questions are Joshua's. A "reasonable default" on an open item is the wrong
+  call, not a shortcut. Ask, then wait.
+- Removal is progress. Most cleanup commits here delete more than they add. If a
+  thing earns nothing today, take it out.
+- Verify against the running code and the real hosts before stating a fact.
+  Documentation establishes possibilities, not working integrations.
+
 ## Conventions
 
 Follow the TypeScript handbook's Do's and Don'ts, the Google TypeScript style guide,
