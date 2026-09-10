@@ -72,6 +72,13 @@ export interface Delivered {
 
 export interface Connector {
   /**
+   * Whether a message the host accepted stays in its queue if the session exits
+   * before reading it. False means the runtime must push such messages again
+   * when the session comes back. Omit when untested; that is treated as true,
+   * the choice that cannot duplicate a message. See docs/experiments/host-queue.md.
+   */
+  readonly queueSurvivesRestart?: boolean;
+  /**
    * Put the message into the session, in whatever form the host takes. Call
    * onRead later if the provider can observe the session taking it in. The
    * provider keeps nothing running; whatever it starts comes back as `watch`.

@@ -208,8 +208,8 @@ describe("provider manager", () => {
   test("onReachable fires once when an agent becomes reachable, not while it stays so", async () => {
     const { host, t } = setup();
     const seen: string[] = [];
-    t.onReachable = async (a) => {
-      seen.push(a.name);
+    t.onReachable = async (a, host) => {
+      seen.push(`${a.name}${host.queueSurvivesRestart ? "" : ":dropsQueue"}`);
     };
     host.live = [obs("k1", "one", { reachable: false, note: "no turns yet" })];
     await t.reconcile();
@@ -225,6 +225,24 @@ describe("provider manager", () => {
     host.live = [obs("k1", "one")];
     await t.reconcile();
     expect(seen).toEqual(["one", "one"]); // gone and back: again
+  });
+
+  test("onReachable carries the provider's statement about its host's queue", async () => {
+    const store = new Store(":memory:");
+    const host = new FakeHost();
+    const drops: Provider = {
+      host: "drops",
+      discovery: { observe: async () => [obs("k", "codexish")] },
+      connector: { queueSurvivesRestart: false, deliver: host.deliver.bind(host) },
+    };
+    const t = new ProviderManager(store, [drops]);
+    const seen: string[] = [];
+    t.onReachable = async (a, h) => {
+      seen.push(`${a.name}:${h.queueSurvivesRestart}`);
+    };
+    await t.reconcile();
+    expect(seen).toEqual(["codexish:false"]);
+    store.close();
   });
 
   test("a failing provider keeps its last presence", async () => {

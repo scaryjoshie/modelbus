@@ -1,7 +1,7 @@
 # Experiment: does a host keep a queued message across quit and resume?
 
-Status: not yet run (2026-09-10). Decides whether redelivery after `delivered` is
-safe per host. Written for a computer-use agent; a person can follow it too.
+Status: run 2026-09-10 by a computer-use agent; results below. Decides whether
+redelivery after `delivered` is safe per host. Written for a computer-use agent; a person can follow it too.
 
 ---
 
@@ -46,11 +46,23 @@ Do not attempt Aside. Do not modify any files outside `/tmp/modelbus-queue-test`
 
 ---
 
-## Results
-
-(fill in)
+## Results (2026-09-10)
 
 | Host | Result | Log before quit | Log after resume |
 |---|---|---|---|
-| Claude Code | | | |
-| Codex | | | |
+| Claude Code | KEPT | `delivered  inbox socket, with token` | `read  inbox socket, with token`; the message appeared in the resumed session on its own |
+| Codex | DROPPED | `delivered  codex queue` | still `delivered`; nothing appeared after resume and 20 s |
+
+Consequences:
+
+- Claude Code keeps its queue across `--resume`. A `delivered` message is not lost
+  and must not be pushed again, or it would arrive twice.
+- Codex drops its queue. A `delivered` message to a Codex thread that exits before
+  reading it is gone from Codex; the daemon must push it again when the thread
+  comes back. Each provider now states this as a fact (`queueSurvivesRestart` on
+  its connector) and redelivery follows it. Aside is untested and treated as
+  keeping its queue, which is the choice that cannot duplicate.
+- Both hosts renamed the session on resume (Claude's suffix changed; Codex took
+  the first turn's title). The agent identity held, since the message stayed
+  attached and its state advanced; only the display name followed the host. This
+  is the name instability already noted in the design discussion.

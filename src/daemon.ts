@@ -155,7 +155,8 @@ export function createDaemon(
       allProviders({ secrets: (host) => fileSecrets(join(modelbusHome(), "secrets"), host) }),
   );
   api.setDeliver((to, outbound, onRead) => providerManager.deliver(to, outbound, onRead));
-  providerManager.onReachable = (agent) => api.redeliver(agent.id).then(() => undefined);
+  providerManager.onReachable = (agent, host) =>
+    api.redeliver(agent.id, { includeDelivered: !host.queueSurvivesRestart }).then(() => undefined);
   if (opts.track !== false) providerManager.start();
   const methods: Record<string, AnyMethod> = buildMethods(store, api, providerManager);
 

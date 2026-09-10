@@ -51,10 +51,11 @@ export class ProviderManager {
   private wasReachable = new Set<string>();
   /**
    * Called once for each agent that is reachable now and was not on the previous
-   * pass. The daemon points this at core's redeliver; the manager does not know
-   * what happens.
+   * pass, with what its provider states about the host: whether messages the
+   * host accepted survive a restart. The daemon points this at core's redeliver;
+   * the manager does not know what happens.
    */
-  onReachable?: (agent: Agent) => Promise<void>;
+  onReachable?: (agent: Agent, host: { queueSurvivesRestart: boolean }) => Promise<void>;
 
   constructor(
     readonly store: Store,
@@ -121,8 +122,10 @@ export class ProviderManager {
       if (!this.presenceOf(a)?.reachable) continue;
       now.add(a.id);
       if (this.wasReachable.has(a.id) || !this.onReachable) continue;
+      // Untested hosts count as keeping their queue: that choice cannot duplicate.
+      const survives = this.providers.get(a.host)?.connector?.queueSurvivesRestart ?? true;
       // One failing callback must not stop the pass or the others.
-      await this.onReachable(a).catch(() => undefined);
+      await this.onReachable(a, { queueSurvivesRestart: survives }).catch(() => undefined);
     }
     this.wasReachable = now;
   }

@@ -34,6 +34,8 @@ export class ClaudeCodeProvider implements Provider {
   readonly host = "claude-code";
   readonly discovery = { observe: this.observe.bind(this) };
   readonly connector = {
+    /** Verified 2026-09-10: a queued message survives `--resume`. */
+    queueSurvivesRestart: true,
     deliver: this.deliver.bind(this),
     attach: this.attach.bind(this),
   };

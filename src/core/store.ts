@@ -280,10 +280,10 @@ export class Store {
   }
 
   /**
-   * Unread messages for an agent that never reached its host: still `sent`, or the
-   * push `failed`. Oldest first, shaped for the delivery port.
+   * Unread messages for an agent in the given states, oldest first, shaped for
+   * the delivery port.
    */
-  undelivered(agentId: string): Outbound[] {
+  unread(agentId: string, states: DeliveryStatus[]): Outbound[] {
     return this.db
       .select({ message: messages, from: agents })
       .from(deliveries)
@@ -293,7 +293,7 @@ export class Store {
         and(
           eq(deliveries.toAgentId, agentId),
           isNull(deliveries.readAt),
-          inArray(deliveries.status, ["sent", "failed"]),
+          inArray(deliveries.status, states),
         ),
       )
       .orderBy(messages.seq)

@@ -166,12 +166,15 @@ twice. After a daemon start every reachable agent counts as newly reachable, so
 whatever waited while the daemon was down goes out on the first pass. No retry
 counter: a push that fails again stays `failed` until the next reappearance.
 
-Two gaps, stated plainly. Between `delivered` and `read` the host can drop its
-copy (Claude Code exiting with the message still queued); the daemon keeps the
-message but does not push it again, because the host may still hold its copy and
-a second push could duplicate it. Untested per host. And a pull marks its items
-`read` as it hands them back, so a connection dropped mid-response leaves them
-marked read and unseen.
+Between `delivered` and `read` a host may drop its copy when the session exits.
+Each provider states whether its host's queue survives a restart
+(`queueSurvivesRestart` on its connector; verified 2026-09-10: Claude Code keeps
+it, Codex drops it, Aside untested and treated as keeping it). For a host that
+drops it, reappearance also retries `delivered` messages that were never read.
+See `docs/experiments/host-queue.md`.
+
+One gap remains: a pull marks its items `read` as it hands them back, so a
+connection dropped mid-response leaves them marked read and unseen.
 
 ## 7. The provider manager (`runtime/provider-manager.ts`)
 

@@ -164,6 +164,24 @@ describe("redelivery", () => {
     expect(pushed).toEqual([]);
   });
 
+  test("includeDelivered also pushes delivered-but-unread, for hosts that drop their queue", async () => {
+    const { api, a, b } = fresh();
+    withDeliver(api, "delivered");
+    await api.send({ fromId: a.id, toId: b.id, body: "lost by the host" });
+    const pushed: string[] = [];
+    api.setDeliver(async (_to, o) => {
+      pushed.push(o.message.body);
+      return { status: "delivered" };
+    });
+    expect(await api.redeliver(b.id)).toEqual({ delivered: 0, failed: 0, waiting: 0 });
+    expect(await api.redeliver(b.id, { includeDelivered: true })).toEqual({
+      delivered: 1,
+      failed: 0,
+      waiting: 0,
+    });
+    expect(pushed).toEqual(["lost by the host"]);
+  });
+
   test("a retry that fails again stays failed; a pull-only recipient stays waiting", async () => {
     const { api, a, b } = fresh();
     withDeliver(api, "failed");

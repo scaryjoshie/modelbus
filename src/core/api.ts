@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { DeliveryResult, Outbound } from "./delivery.ts";
+import type { DeliveryResult, DeliveryStatus, Outbound } from "./delivery.ts";
 import { DEFAULT_LIMITS, type Limits } from "./limits.ts";
 import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
@@ -108,16 +108,21 @@ export class Api {
   /**
    * Push everything still waiting for an agent: sent but never delivered, or the
    * push failed. The runtime calls this when the agent becomes reachable; core
-   * does not know why. Messages already delivered are left alone: the host may
-   * still hold its copy.
+   * does not know why. Messages already delivered are left alone unless the
+   * caller says the host lost them (`includeDelivered`), since otherwise the
+   * host may still hold its copy.
    */
   async redeliver(
     agentId: string,
+    opts: { includeDelivered?: boolean } = {},
   ): Promise<{ delivered: number; failed: number; waiting: number }> {
     const to = this.store.agentById(agentId);
     if (!to) throw new ApiError("unknown agent");
     const counts = { delivered: 0, failed: 0, waiting: 0 };
-    for (const outbound of this.store.undelivered(to.id)) {
+    const states: DeliveryStatus[] = opts.includeDelivered
+      ? ["sent", "failed", "delivered"]
+      : ["sent", "failed"];
+    for (const outbound of this.store.unread(to.id, states)) {
       if (this.pushing.has(outbound.message.id)) continue;
       const r = await this.push(to, outbound);
       counts[r.status === "sent" ? "waiting" : r.status]++;

@@ -19,6 +19,8 @@ export class CodexProvider implements Provider {
   readonly host = "codex";
   readonly discovery = { observe: this.observe.bind(this) };
   readonly connector = {
+    /** Verified 2026-09-10: a queued message is gone after `codex resume`. */
+    queueSurvivesRestart: false,
     deliver: this.deliver.bind(this),
   };
 
