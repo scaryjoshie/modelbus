@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { Api, ApiError } from "./core/api.ts";
 import type { Limits } from "./core/limits.ts";
-import { dbPath, socketPath } from "./core/paths.ts";
+import { dbPath, ensureHome, socketPath } from "./core/paths.ts";
 import { newId, Store } from "./core/store.ts";
 import { allProviders } from "./providers/index.ts";
 import type { Provider } from "./runtime/provider.ts";
@@ -189,7 +189,7 @@ export function createDaemon(
   }
 
   const unix = opts.unix ?? socketPath();
-  mkdirSync(dirname(unix), { recursive: true });
+  mkdirSync(dirname(unix), { recursive: true, mode: 0o700 });
   if (existsSync(unix)) unlinkSync(unix);
   if (api.limits.maxWaitSeconds >= IDLE_TIMEOUT_SECONDS) {
     throw new Error("limits.maxWaitSeconds must be below the socket idle timeout");
@@ -200,6 +200,8 @@ export function createDaemon(
     idleTimeout: IDLE_TIMEOUT_SECONDS,
     fetch: handle,
   } as unknown as Parameters<typeof Bun.serve>[0]);
+  // Connecting needs write permission on the socket file: owner only.
+  chmodSync(unix, 0o600);
 
   return {
     api,
@@ -216,6 +218,7 @@ export function createDaemon(
 }
 
 if (import.meta.main) {
+  ensureHome();
   const d = createDaemon();
   console.log(`modelbus daemon pid ${process.pid} on ${d.unix}, db ${dbPath()}`);
   const shutdown = () => {

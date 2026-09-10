@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
 import { type Identity, rpc } from "./client.ts";
+import { ensureHome } from "./core/paths.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { parseToken, whoAmI } from "./identity.ts";
 import { allProviders } from "./providers/index.ts";
@@ -51,6 +52,7 @@ const commands: Record<string, Command> = {
     usage: "serve                                  run the daemon in the foreground",
     async run() {
       const { createDaemon } = await import("./daemon.ts");
+      ensureHome();
       const d = createDaemon();
       console.log(`modelbus daemon pid ${process.pid} on ${d.unix}`);
       const stop = () => {

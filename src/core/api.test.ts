@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, rpc } from "../client.ts";
@@ -146,6 +146,8 @@ describe("protocol", () => {
     const unix = join(dir, "d.sock");
     const d = createDaemon({ store: new Store(join(dir, "d.db")), unix, track: false });
     try {
+      expect(statSync(unix).mode & 0o777).toBe(0o600); // the door is owner-only
+      expect(statSync(join(dir, "d.db")).mode & 0o777).toBe(0o600); // so is the database
       const app = await rpc("register", { name: "app" }, undefined, unix);
       const other = await rpc("register", { name: "other" }, undefined, unix);
       expect(app.agent.name).toBe("app");

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
@@ -56,8 +56,10 @@ export class Store {
   readonly db: BunSQLiteDatabase;
 
   constructor(path: string) {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.sqlite = new Database(path, { create: true });
+    // Owner-only before WAL mode: SQLite gives the -wal and -shm files the same mode.
+    if (path !== ":memory:") chmodSync(path, 0o600);
     this.sqlite.run("PRAGMA journal_mode = WAL");
     this.sqlite.run("PRAGMA foreign_keys = ON");
     this.db = drizzle(this.sqlite);

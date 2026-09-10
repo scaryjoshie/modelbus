@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, openSync } from "node:fs";
+import { existsSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { DaemonUnreachable, rpc } from "./client.ts";
-import { cliPath, modelbusHome, socketPath } from "./core/paths.ts";
+import { cliPath, ensureHome, socketPath } from "./core/paths.ts";
 
 const START_TIMEOUT_MS = 5000;
 const POLL_MS = 100;
@@ -14,8 +14,7 @@ export async function ensureDaemon(): Promise<void> {
   } catch (e) {
     if (!(e instanceof DaemonUnreachable)) throw e;
   }
-  mkdirSync(modelbusHome(), { recursive: true });
-  const log = openSync(join(modelbusHome(), "daemon.log"), "a");
+  const log = openSync(join(ensureHome(), "daemon.log"), "a", 0o600);
   const child = Bun.spawn([process.execPath, cliPath(), "serve"], {
     stdio: ["ignore", log, log],
     env: process.env,
