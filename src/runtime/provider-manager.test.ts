@@ -192,6 +192,19 @@ describe("provider manager", () => {
     expect(t.watching).toBe(0);
   });
 
+  test("ready() settles after the first pass; the roster is complete by then", async () => {
+    const { host, t } = setup();
+    host.live = [obs("k1", "one")];
+    t.start(60_000);
+    try {
+      expect(t.list()).toEqual([]); // the first pass has not finished yet
+      await t.ready();
+      expect(t.list().map((e) => e.name)).toEqual(["one"]);
+    } finally {
+      t.stop();
+    }
+  });
+
   test("a failing provider keeps its last presence", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];

@@ -43,6 +43,8 @@ export class ProviderManager {
   private readonly contact = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight: Promise<void> | undefined;
+  /** The first pass after start(); already settled if start() was never called. */
+  private firstPass: Promise<void> = Promise.resolve();
   /** Watches providers started on our behalf and have not finished. */
   private readonly open = new Set<Watch>();
 
@@ -54,8 +56,13 @@ export class ProviderManager {
   }
 
   start(intervalMs = RECONCILE_INTERVAL_MS): void {
-    void this.reconcile();
+    this.firstPass = this.reconcile();
     this.timer = setInterval(() => void this.reconcile(), intervalMs);
+  }
+
+  /** Settles once the first pass since start() has completed. Never waits after that. */
+  ready(): Promise<void> {
+    return this.firstPass;
   }
 
   /** Clear the timer and close every watch still running. */

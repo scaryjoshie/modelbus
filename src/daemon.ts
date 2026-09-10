@@ -116,7 +116,9 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     who: open({
       params: z.object({ filter: z.string().optional(), fresh: z.boolean().optional() }),
       handler: async (p) => {
-        if (p.fresh) await providerManager.reconcile();
+        // Right after startup the first pass may still be running; a roster
+        // from before it finished would be empty.
+        await (p.fresh ? providerManager.reconcile() : providerManager.ready());
         return { agents: providerManager.list(p.filter) };
       },
     }),
