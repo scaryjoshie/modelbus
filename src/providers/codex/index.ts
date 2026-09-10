@@ -1,5 +1,6 @@
-import { type DeliveryResult, failed, queued } from "../../core/delivery.ts";
+import { type DeliveryResult, failed, type Outbound, queued } from "../../core/delivery.ts";
 import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
+import { attributed } from "../../util/attribution.ts";
 import { ancestors, cwdOf, listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
@@ -73,10 +74,10 @@ export class CodexProvider implements Provider {
 
   private async deliver(
     threadId: string,
-    text: string,
-    marker: string,
+    outbound: Outbound,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
+    const { text, marker } = attributed(outbound);
     const meta = threadMeta(threadId);
     const fromOffset = meta.rolloutPath ? fileOffset(meta.rolloutPath) : 0;
     const proc = Bun.spawn(["codex", "queue", "--thread", threadId, "--message", text], {

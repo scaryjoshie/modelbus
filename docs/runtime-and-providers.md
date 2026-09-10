@@ -230,21 +230,25 @@ Joshua added this explicitly to the questions to resolve: whether a dedicated
 message formatter is warranted, where it belongs, and which format works best
 when presenting messages to agents. No format or implementation change is decided.
 
-Current implementation has two presentation paths:
+Settled 2026-09-09 (Joshua): the transfer is structured; the text can change
+later. Core hands `Outbound` (message row + sender row) through `Deliver` and the
+runtime passes it to `Connector.deliver` unchanged. Each connector chooses the
+host's form and its own receipt marker. The three built-in providers call one
+plain function, `util/attribution.ts`, for the current default text; changing the
+format is now a change to that function, and a host with richer input can skip it.
 
-- `core/api.ts` renders native deliveries as `[modelbus #<id>] from <name>`,
-  a blank line, and the original body. Providers watch for `#<id>` in transcripts
-  to recognize receipts, so the marker currently has an operational purpose.
+Still two presentation paths for the text itself, both unchanged:
+
+- Native deliveries: `[modelbus #<id>] from <name>`, a blank line, the body.
+  Providers watch for `#<id>` in transcripts, so the marker has an operational purpose.
 - `src/render.ts` renders inbox items and inline replies as `name: text`, with
   continuation lines indented. CLI and MCP use this presentation; the RPC returns
   structured message data and stores the original body without either wrapper.
 
 Questions to resolve:
 
-- Is a shared formatting function sufficient, or do actual host differences warrant
-  an explicit formatter contract? Do not introduce a class or framework by default.
-- Should core hand structured messages to the runtime, with presentation owned by
-  runtime/client formatters and native encoding owned by each provider connector?
+- Do actual host differences ever warrant an explicit formatter contract beyond
+  the shared function? Do not introduce a class or framework by default.
 - Which fields does the recipient need: sender, conversation, message ID, reply
   reference, attachment references, or other context? Which can remain metadata?
 - Should push, inbox reads, and inline replies use the same text format, or only

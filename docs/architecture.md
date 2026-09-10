@@ -21,7 +21,8 @@ src/
   runtime/     provider.ts (Provider, Discovery, Connector, identity/setup contracts),
                discovery.ts (observe without registration),
                provider-manager.ts (reconciliation, presence, routing, roster)
-  util/        ps.ts (process table, ancestors), watch.ts (transcript watcher, file events)
+  util/        ps.ts (process table, ancestors), watch.ts (transcript watcher, file events),
+               attribution.ts (default plain-text form of a message, and its receipt marker)
   providers/   one folder per host: index.ts (the class), the host's layout,
                configure.ts (what init writes); index.ts lists them
   daemon.ts    composition root: store + api + provider manager + providers + RPC method table
@@ -112,7 +113,7 @@ Provider.host                           existing host namespace
 Provider.discovery?                     Discovery object
   observe()                             -> Observation[]
 Provider.connector?                     Connector object
-  deliver(key, text, marker, onReceipt)  -> DeliveryResult
+  deliver(key, outbound, onReceipt)      -> DeliveryResult
   attach?(key, info)                     accept host runtime information
 Provider.identifySelf?()                 -> SelfIdentity | null
 Provider.configure?()                    -> ConfigurePlan
@@ -128,6 +129,13 @@ An `Observation` is the key, the preferred name, the relationship (`top-level` |
 title). Only `top-level` observations become agents. Anything else a provider needs
 at delivery time it re-derives from its host, or keeps in its own memory (Claude
 tokens, Aside's session-to-account map).
+
+`deliver` receives an `Outbound` (`core/delivery.ts`): the stored message row and
+the sender's agent row. Core does not render text. The connector chooses the host's
+form and, if it watches for receipts, its own marker. The three built-in providers
+all take plain text, so each calls `util/attribution.ts` for the default form:
+`[modelbus #<id>] from <name>`, a blank line, the body unchanged; the marker is
+`#<id>`. A host with richer input would not use it.
 
 Delivery has three states per recipient. `send` returns after storage and the
 initial delivery attempt, or throws on refusal. After
@@ -167,18 +175,15 @@ provider receipt watchers remain lifecycle work, as recorded in the design notes
    If the recipient is blocked in send-and-wait for a reply from this sender, the
    message is returned through that call instead of pushed.
 6. Receipt is separate: the provider captured the host transcript's size before
-   delivering and watches it (file change events) for a line containing
-   `#<message id>` in the host's "user message" shape; then the row becomes
-   `received`. A pull marks its items received.
+   delivering and watches it (file change events) for a line containing its
+   marker in the host's "user message" shape; then the row becomes `received`.
+   A pull marks its items received.
 7. With `wait`, the API blocks (up to 240 s) for the next message from the
    recipient in this DM and returns it inline.
 
 `pull { scope?, wait?, limit? }` returns unreceived deliveries (oldest first, cap
 50), marks them received, and reports `more` and `moreElsewhere`. It is the line
 for pull-only recipients and the explicit catch-up (`sync`) for everyone else.
-
-Delivered text is one attribution line plus the body:
-`[modelbus #<id>] from <name>` — no instructions.
 
 ## 9. Hosts
 

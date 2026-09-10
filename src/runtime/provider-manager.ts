@@ -1,4 +1,4 @@
-import type { DeliveryResult } from "../core/delivery.ts";
+import type { DeliveryResult, Outbound } from "../core/delivery.ts";
 import type { Agent, Store } from "../core/store.ts";
 import { discover } from "./discovery.ts";
 import type { Provider } from "./provider.ts";
@@ -108,17 +108,12 @@ export class ProviderManager {
     return true;
   }
 
-  /** Deliver rendered text into an agent's session via its provider. */
-  async deliver(
-    agent: Agent,
-    text: string,
-    marker: string,
-    onReceipt: () => void,
-  ): Promise<DeliveryResult> {
+  /** Hand a message to the provider holding the agent's line. */
+  async deliver(agent: Agent, outbound: Outbound, onReceipt: () => void): Promise<DeliveryResult> {
     const provider = this.providers.get(agent.host);
     if (!provider?.connector) return { status: "queued", detail: "waiting for it to sync" };
     try {
-      return await provider.connector.deliver(agent.hostKey, text, marker, onReceipt);
+      return await provider.connector.deliver(agent.hostKey, outbound, onReceipt);
     } catch (e) {
       return { status: "failed", detail: e instanceof Error ? e.message : String(e) };
     }

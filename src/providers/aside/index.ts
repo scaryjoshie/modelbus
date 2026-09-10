@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { type DeliveryResult, failed, queued } from "../../core/delivery.ts";
+import { type DeliveryResult, failed, type Outbound, queued } from "../../core/delivery.ts";
 import type { Observation, Provider } from "../../runtime/provider.ts";
+import { attributed } from "../../util/attribution.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
 import { accounts, asideCli, daemonUp, isUserEntry, sessionsOf, transcriptPath } from "./state.ts";
@@ -55,10 +56,10 @@ export class AsideProvider implements Provider {
 
   private async deliver(
     sessionId: string,
-    text: string,
-    marker: string,
+    outbound: Outbound,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
+    const { text, marker } = attributed(outbound);
     const account =
       this.accountOf.get(sessionId) ?? accounts().find((a) => transcriptPath(a, sessionId));
     if (account === undefined) return failed("account for session not found");

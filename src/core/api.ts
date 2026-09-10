@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { DeliveryResult } from "./delivery.ts";
+import type { DeliveryResult, Outbound } from "./delivery.ts";
 import { GUARDS } from "./guards.ts";
 import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
@@ -11,9 +11,8 @@ import type { Agent, InboxItem, Message, Store } from "./store.ts";
  */
 
 export type Deliver = (
-  agent: Agent,
-  text: string,
-  marker: string,
+  to: Agent,
+  outbound: Outbound,
   onReceipt: () => void,
 ) => Promise<DeliveryResult>;
 
@@ -76,7 +75,7 @@ export class Api {
     // pushed into their host (it would arrive twice).
     const delivery: DeliveryResult = this.waiting.has(`${conv.id}:${from.id}`)
       ? { status: "queued", detail: "returned inline to the waiting sender" }
-      : await this.deliver(to, this.render(message, from), `#${message.id}`, () =>
+      : await this.deliver(to, { message, from }, () =>
           this.store.markReceived([message.id], to.id),
         );
     this.store.recordDelivery(message.id, to.id, delivery);
@@ -86,11 +85,6 @@ export class Api {
         ? await this.waitForReply(from.id, to, conv.id, message.seq, opts.wait)
         : undefined;
     return { message, to, delivery, reply };
-  }
-
-  /** Text handed to a host when a message is queued into it: one line of attribution. */
-  render(message: Message, from: Agent): string {
-    return `[modelbus #${message.id}] from ${from.name}\n\n${message.body}`;
   }
 
   private async waitForReply(

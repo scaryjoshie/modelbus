@@ -1,4 +1,4 @@
-import type { DeliveryResult } from "../core/delivery.ts";
+import type { DeliveryResult, Outbound } from "../core/delivery.ts";
 
 /**
  * The runtime's contract with a host integration. Core does not consume it.
@@ -50,13 +50,11 @@ export interface Discovery {
 }
 
 export interface Connector {
-  /** Put `text` into the session; call onReceipt later if the provider can observe it being read. */
-  deliver(
-    key: string,
-    text: string,
-    marker: string,
-    onReceipt: () => void,
-  ): Promise<DeliveryResult>;
+  /**
+   * Put the message into the session, in whatever form the host takes. Call
+   * onReceipt later if the provider can observe the session consuming it.
+   */
+  deliver(key: string, outbound: Outbound, onReceipt: () => void): Promise<DeliveryResult>;
   /** Accept runtime information a session hands over about itself (secrets stay here). */
   attach?(key: string, info: Record<string, unknown>): void;
 }

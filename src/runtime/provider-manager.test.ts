@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import type { Outbound } from "../core/delivery.ts";
+import type { Agent } from "../core/store.ts";
 import { Store } from "../core/store.ts";
 import { discover } from "./discovery.ts";
 import type { Observation, Provider } from "./provider.ts";
@@ -9,12 +11,20 @@ class FakeHost implements Provider {
   readonly discovery = { observe: async () => this.live };
   readonly connector = { deliver: this.deliver.bind(this) };
   live: Observation[] = [];
-  delivered: Array<{ key: string; text: string }> = [];
-  async deliver(key: string, text: string, _marker: string, onReceipt: () => void) {
-    this.delivered.push({ key, text });
+  delivered: Array<{ key: string; body: string }> = [];
+  async deliver(key: string, o: Outbound, onReceipt: () => void) {
+    this.delivered.push({ key, body: o.message.body });
     onReceipt();
     return { status: "queued" as const };
   }
+}
+
+/** A message from `from` as core would hand it over; nothing here is stored. */
+function outbound(from: Agent, body: string): Outbound {
+  return {
+    message: { seq: 1, id: "m1", conversationId: "c1", fromAgentId: from.id, body, createdAt: 0 },
+    from,
+  };
 }
 
 function obs(key: string, name: string, extra: Partial<Observation> = {}): Observation {
@@ -62,8 +72,10 @@ describe("provider manager", () => {
     await manager.reconcile();
     expect(await discover([provider])).toEqual([]);
     expect(manager.list().map((a) => a.id)).toEqual([agent.id]);
-    expect((await manager.deliver(agent, "hello", "#m", () => {})).status).toBe("queued");
-    expect(host.delivered).toEqual([{ key: "direct", text: "hello" }]);
+    expect((await manager.deliver(agent, outbound(agent, "hello"), () => {})).status).toBe(
+      "queued",
+    );
+    expect(host.delivered).toEqual([{ key: "direct", body: "hello" }]);
     store.close();
   });
 
@@ -120,19 +132,19 @@ describe("provider manager", () => {
     const agent = store.agentByName("one");
     if (!agent) throw new Error("agent missing");
     let receipt = false;
-    const result = await t.deliver(agent, "hello", "#m1", () => {
+    const result = await t.deliver(agent, outbound(agent, "hello"), () => {
       receipt = true;
     });
     expect(result.status).toBe("queued");
     expect(receipt).toBe(true);
-    expect(host.delivered).toEqual([{ key: "k1", text: "hello" }]);
+    expect(host.delivered).toEqual([{ key: "k1", body: "hello" }]);
   });
 
   test("an agent nobody observes is live while it calls in", async () => {
     const { t } = setup();
     const a = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
     expect(t.list().map((e) => `${e.name}:${e.note}`)).toEqual(["lonely:by sync"]);
-    const result = await t.deliver(a, "hi", "#m", () => undefined);
+    const result = await t.deliver(a, outbound(a, "hi"), () => undefined);
     expect(result.status).toBe("queued");
   });
 

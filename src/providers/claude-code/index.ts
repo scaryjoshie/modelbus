@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { type DeliveryResult, failed, queued } from "../../core/delivery.ts";
+import { type DeliveryResult, failed, type Outbound, queued } from "../../core/delivery.ts";
 import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
+import { attributed } from "../../util/attribution.ts";
 import { listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
@@ -82,8 +83,7 @@ export class ClaudeCodeProvider implements Provider {
 
   private async deliver(
     sessionId: string,
-    text: string,
-    marker: string,
+    outbound: Outbound,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
     const a = this.attached.get(sessionId) ?? {};
@@ -92,6 +92,7 @@ export class ClaudeCodeProvider implements Provider {
     const transcriptPath = a.transcriptPath ?? reg?.transcriptPath;
     if (!socketPath) return failed("no inbox socket");
     if (!existsSync(socketPath)) return failed("inbox socket missing");
+    const { text, marker } = attributed(outbound);
     const fromOffset = transcriptPath ? fileOffset(transcriptPath) : 0;
     await postViaHelper(socketPath, a.token, text);
     if (transcriptPath) {
