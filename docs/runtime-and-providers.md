@@ -317,25 +317,54 @@ transcript watches (`Watch` in `util/watch.ts`, `Delivered` in the connector
 contract). Cancelling an in-flight call from outside, if ever needed, would be a
 signal passed in, kept separate from ownership of long-lived work.
 
-## Questions to work through
+## Where the open work stands (2026-09-11)
 
-This is an index of unresolved work, not a commitment to implement it all at once.
-The sections above contain the direction and constraints for each item.
+An index, not a commitment. The sections above hold the direction and constraints.
 
-1. Registration and authentication: remove reliance on unverified self claims;
-   credential lifetime/revocation, client ownership, and app-supplied agent identity.
-2. Independent discovery, setup, and connection operations: explicit connection
-   policy and how readiness evidence is scoped without requiring a universal probe.
-3. Provider settings and private state: schema, persistence, reload, and Claude
-   token capture/use across restarts and resumes.
-4. Runtime lifecycle: cancellation, receipt watchers, shutdown, and recurring work.
-5. Message formatting: whether a formatter is warranted, its owner, and the best
-   agent-facing representation for each delivery context.
-6. Provider instances and presentation metadata, including icons and app grouping.
-7. Web participation: browser/account/session context, software-held credentials,
-   supported communication paths, and optional discovery across browsers.
-8. Shared artifacts/file board: independent publish/read operations, references
-   versus snapshots, transfer, access, and expiration across local/cloud storage.
+Resolved since the first draft: message states (sent/delivered/read/failed);
+core hands connectors structured messages; limits as options; lifecycle (watch
+handles owned by the runtime); Claude token persistence (secrets keeper);
+redelivery on reappearance, with each provider stating whether its host keeps
+its queue; the daemon as a login service that clients never start; a web door
+(join/who/send/sync over HTTP, exposed by a tunnel of the user's choice).
+
+### Blocks another person from installing it
+
+- **Packaging.** Everything runs from a checkout and `init` writes that checkout's
+  absolute path into host configs and the launchd file. Needs a `modelbus`
+  command on PATH with migrations bundled, and `init` pointing hosts at it.
+- **Web door auth.** The endpoint has none; the tunnel address is the only secret.
+  Needs a bearer token or OAuth in front of it, and a stable address.
+- **A quickstart** in the README, and a stated platform: macOS today (launchd);
+  Linux untested.
+
+### Blocks the intended way of working
+
+- **The person as a participant.** How a human sends and is addressed: a
+  registered agent named for them, or a new identity kind. Decision: Joshua.
+- **Names.** Hosts rename sessions on resume (verified). Pin a name once set,
+  keep it unique, accept id or name in `send`.
+- **Groups / projects.** Named sets of agents in core, as conversations with
+  more than two participants; `who` and the shim scoped by group. Proposal in
+  the discussion of 2026-09-11; placement decision: Joshua.
+- **Web chats telling themselves apart** when several share one account. See
+  the proposal of 2026-09-11; first learn what the service actually sends.
+
+### Deferred, on purpose
+
+- Settings as a config file: the limits, the token capture toggle, poll interval.
+- Pull acknowledgment: a dropped connection can lose pulled messages (gap 2).
+- Aside messages attributed per session rather than per account.
+- Verified local identity: `self` claims are trusted; acceptable for one user on
+  one machine, and said so in `architecture.md`.
+- The inbox text format (`name: text`, continuation indented) mangles code.
+- Provider instances and presentation metadata (icons, app grouping).
+- Cancel a message still in the daemon (`withdrawn` state); needs a UI to matter.
+- Explicit connection replacing automatic binding of discovered sessions.
+- Shared artifacts / file board.
+- A relay service so web chats need no user-installed tunnel.
+- Subagents or Codex threads as addressable agents (Codex may already have a door
+  per thread; Claude Code has none).
 
 ## What this pass implements
 
