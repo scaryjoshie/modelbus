@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ConfigurePlan } from "../../core/adapter.ts";
 import { cliPath } from "../../core/paths.ts";
+import type { ConfigurePlan } from "../../runtime/provider.ts";
 import { accounts, usersDir } from "./state.ts";
 
 /**

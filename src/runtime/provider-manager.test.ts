@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { HostAdapter, Observation } from "./core/adapter.ts";
-import { Store } from "./core/store.ts";
-import { Tracker } from "./tracker.ts";
+import { Store } from "../core/store.ts";
+import { discover } from "./discovery.ts";
+import type { Observation, Provider } from "./provider.ts";
+import { ProviderManager } from "./provider-manager.ts";
 
-class FakeHost implements HostAdapter {
+class FakeHost implements Provider {
   readonly host = "fake";
+  readonly discovery = { observe: async () => this.live };
+  readonly connector = { deliver: this.deliver.bind(this) };
   live: Observation[] = [];
   delivered: Array<{ key: string; text: string }> = [];
-  async observe() {
-    return this.live;
-  }
   async deliver(key: string, text: string, _marker: string, onReceipt: () => void) {
     this.delivered.push({ key, text });
     onReceipt();
@@ -24,10 +24,67 @@ function obs(key: string, name: string, extra: Partial<Observation> = {}): Obser
 function setup() {
   const store = new Store(":memory:");
   const host = new FakeHost();
-  return { store, host, t: new Tracker(store, [host]) };
+  return { store, host, t: new ProviderManager(store, [host]) };
 }
 
-describe("tracker", () => {
+describe("provider manager", () => {
+  test("discovery can run without binding agents or invoking other capabilities", async () => {
+    const { store, host } = setup();
+    host.live = [obs("k1", "one")];
+    const provider: Provider = {
+      host: host.host,
+      discovery: host.discovery,
+      configure: () => {
+        throw new Error("discovery must not configure");
+      },
+      identifySelf: async () => {
+        throw new Error("discovery must not identify the caller");
+      },
+      connector: {
+        deliver: async () => {
+          throw new Error("discovery must not deliver");
+        },
+      },
+    };
+    expect(await discover([provider])).toEqual([
+      { host: "fake", status: "observed", observations: host.live },
+    ]);
+    expect(store.listAgents()).toEqual([]);
+    store.close();
+  });
+
+  test("a connector-only provider can receive without discovery", async () => {
+    const store = new Store(":memory:");
+    const host = new FakeHost();
+    const provider: Provider = { host: host.host, connector: host.connector };
+    const manager = new ProviderManager(store, [provider]);
+    const agent = manager.identify({ host: host.host, key: "direct", name: "direct" });
+    await manager.reconcile();
+    expect(await discover([provider])).toEqual([]);
+    expect(manager.list().map((a) => a.id)).toEqual([agent.id]);
+    expect((await manager.deliver(agent, "hello", "#m", () => {})).status).toBe("queued");
+    expect(host.delivered).toEqual([{ key: "direct", text: "hello" }]);
+    store.close();
+  });
+
+  test("failed discovery is distinguishable from an empty observation", async () => {
+    const results = await discover([
+      {
+        host: "broken",
+        discovery: {
+          observe: async () => {
+            throw new Error("unavailable");
+          },
+        },
+      },
+      { host: "empty", discovery: { observe: async () => [] } },
+    ]);
+    expect(results).toEqual([
+      { host: "broken", status: "failed", detail: "unavailable" },
+      { host: "empty", status: "observed", observations: [] },
+    ]);
+  });
+
   test("observations become agents; the same key stays the same agent across passes", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one"), obs("k2", "two")];
@@ -56,7 +113,7 @@ describe("tracker", () => {
     expect(t.list().map((e) => e.name)).toEqual(["root"]);
   });
 
-  test("deliver hands the adapter the key it observed", async () => {
+  test("deliver hands the provider the key it observed", async () => {
     const { store, host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
@@ -88,11 +145,11 @@ describe("tracker", () => {
     expect(t.list()).toHaveLength(1);
   });
 
-  test("a failing adapter keeps its last presence", async () => {
+  test("a failing provider keeps its last presence", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
-    host.observe = async () => {
+    host.discovery.observe = async () => {
       throw new Error("host down");
     };
     await t.reconcile();

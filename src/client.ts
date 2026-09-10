@@ -15,6 +15,15 @@ export type Result<M extends MethodName> = Awaited<ReturnType<Methods[M]["handle
 
 export class DaemonUnreachable extends Error {}
 
+/** Bind a caller once. Credentials travel in the envelope, never in tool arguments. */
+export function createClient(identity: Identity, unix: string = socketPath()) {
+  return {
+    request<M extends MethodName>(method: M, params: Params<M>): Promise<Result<M>> {
+      return rpc(method, params, identity, unix);
+    },
+  };
+}
+
 export async function rpc<M extends MethodName>(
   method: M,
   params: Params<M>,

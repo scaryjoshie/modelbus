@@ -12,13 +12,13 @@ import {
  *
  * Only what must survive a daemon restart lives here: who the agents are and what
  * was said. Presence (who is live and reachable right now) is re-observed every few
- * seconds and kept in the tracker's memory.
+ * seconds and kept in the runtime's memory.
  */
 
 /**
  * An agent: our permanent id and display name, plus the host that holds its line
  * and the host's own key for it. Same (host, hostKey) is the same agent forever.
- * The key is opaque to the core; only the host's adapter knows what it means.
+ * The key is opaque to the core; only the host's provider knows what it means.
  */
 export const agents = sqliteTable(
   "agents",

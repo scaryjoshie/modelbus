@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import type { HostAdapter, Observation, SelfIdentity } from "../../core/adapter.ts";
 import { type DeliveryResult, failed, queued } from "../../core/delivery.ts";
+import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
@@ -28,11 +28,16 @@ interface Attached {
   transcriptPath?: string;
 }
 
-export class ClaudeCodeAdapter implements HostAdapter {
+export class ClaudeCodeProvider implements Provider {
   readonly host = "claude-code";
+  readonly discovery = { observe: this.observe.bind(this) };
+  readonly connector = {
+    deliver: this.deliver.bind(this),
+    attach: this.attach.bind(this),
+  };
   private readonly attached = new Map<string, Attached>();
 
-  async observe(): Promise<Observation[]> {
+  private async observe(): Promise<Observation[]> {
     const procs = new Map((await listProcesses()).map((p) => [p.pid, p]));
     return liveSessions().map((s) => ({
       key: s.sessionId,
@@ -65,7 +70,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
     };
   }
 
-  attach(sessionId: string, info: Record<string, unknown>): void {
+  private attach(sessionId: string, info: Record<string, unknown>): void {
     const prev = this.attached.get(sessionId) ?? {};
     const str = (v: unknown, fallback?: string) => (typeof v === "string" ? v : fallback);
     this.attached.set(sessionId, {
@@ -75,7 +80,7 @@ export class ClaudeCodeAdapter implements HostAdapter {
     });
   }
 
-  async deliver(
+  private async deliver(
     sessionId: string,
     text: string,
     marker: string,

@@ -2,8 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import type { ConfigurePlan } from "../../core/adapter.ts";
 import { cliPath } from "../../core/paths.ts";
+import type { ConfigurePlan } from "../../runtime/provider.ts";
 
 /**
  * What `init` writes for Claude Code: a permission rule so the modelbus tools never

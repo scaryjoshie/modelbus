@@ -1,41 +1,56 @@
 # modelbus
 
-A local message bus for coding agents.
+A local message bus between coding-agent sessions. One daemon per user, TypeScript
+on Bun, SQLite for durable identities and messages.
 
-Most coding-agent hosts (Claude Code, Codex CLI, Cursor, Gemini CLI, OpenCode, Goose, Cline, Copilot CLI, and others) can act as MCP clients, but almost none of them expose a reliable way to push a message *into* a running session. modelbus is a small, pull-first hub that gives every agent a stable name and an inbox, and layers host-specific "wake" delivery on top only where a host actually supports it.
+The current POC discovers Claude Code, Codex, and Aside sessions, delivers through
+their native input mechanisms, and lets other processes join through registration.
+Agents use a small MCP tool surface to send messages and find peers. A process
+without a native delivery integration receives through `pull` / `sync`.
 
-## Design principles
+## Run
 
-- **Pull-first.** The universal adapter is an MCP server face exposing a `sync()` / `check_inbox()` tool with server-side cursors. Every MCP-client host can use it.
-- **Push as an optimization, not a dependency.** Claude Code Channels, Agent SDK streaming input, OpenCode's `/tui` endpoint, OpenClaw `sessions_send`, and hook / `pre_llm_call` injection are layered on per host.
-- **Loop protection by default.** Sender/source field for self-echo drop, identical-repeat dedupe, unread-queue cap (50), overflow drop-oldest (100), urgency tiers with a delayed normal-priority push, hop counter + TTL, busy-guard during active turns, and a ~64 KB per-message byte cap.
-- **Explicit recipients.** No broadcast-to-everyone by default.
-- **Local and boring.** SQLite on disk, per-agent names, no cloud, no daemon required for the basic path.
-
-## Docs
-
-- [`docs/host-adapter-inventory-and-bus-design.md`](docs/host-adapter-inventory-and-bus-design.md) — per-host inventory of push/hook/MCP/headless capabilities, survey of existing agent buses, loop-protection patterns, standards status (A2A / MCP 2026-07-28), and the recommended adapter per host.
-
-## Status
-
-Working POC: Claude Code, Codex, and Aside sessions exchange direct messages through
-a local daemon, with no per-message prompts, and any process can join by registering.
-
-```
+```sh
 bun install
-bun run src/cli.ts init --write   # wires Claude Code, Codex, Aside (writes their configs)
-bun run src/cli.ts who            # agents on the bus
+bun run src/cli.ts init          # describe host setup without writing it
+bun run src/cli.ts init --write  # apply host configuration
+bun run src/cli.ts who
 bun run src/cli.ts send --to <name> "text"
 ```
 
-Layout: `src/core` (store, api, guards, adapter interface), `src/daemon.ts` and
-`src/tracker.ts` (the bus), `src/adapters/*` (one file per host plus self-registration),
-`src/cli.ts` and `src/mcp.ts` (clients).
+Sending requires an identified session or registration credential. Host setup may
+require restarting the host to load its tools. Claude's delivery token currently
+lives only in provider memory and can be lost when the modelbus daemon restarts.
+After updating this source checkout, restart a running daemon to load the changes.
+For this provider rename, an old daemon may still refer to the moved posting helper;
+affected Claude sessions also need to re-attach their token after restart.
 
-Docs:
-- `docs/architecture.md` — how the code works: data model, identity, delivery, hosts.
-- `docs/handoff.md` — current status, lessons learned, next-step candidates.
-- `docs/protocol.md` — how any process joins the bus (register, send, receive).
-- `docs/poc-spec.md` — the POC spec with milestones logged. A proposal, not a decision.
-- `docs/design-notes.md` — the wider exploration; explicitly drafts, not decisions.
-- `docs/host-adapter-inventory-and-bus-design.md` — external research report.
+## Boundaries
+
+- **Core:** agents, conversations, messages, delivery records, communication rules.
+- **Runtime:** authentication boundary, provider management, presence, routing.
+- **Providers:** host-specific discovery, communication, identity lookup, and setup.
+- **Clients:** CLI, MCP shim, and applications using the daemon's protocol.
+
+The runtime owns the provider contract. Discovery and communication are separate
+optional capabilities; observing a host does not itself register agents. The POC
+runtime still applies automatic binding during reconciliation. Explicit connection
+UX, provider settings, web integrations, icons, and a shared artifact board are
+documented directions, not shipped features.
+
+## Development
+
+`bun run check` runs type checking, formatting/lint, layer checks, and tests. Tests
+use disposable databases and Unix sockets; a restricted shell may need permission
+to open the test sockets.
+
+## Docs
+
+- [Architecture](docs/architecture.md): the code and behavior that exist.
+- [Runtime and providers](docs/runtime-and-providers.md): current design direction,
+  rationale, implementation scope, and open questions from September 9.
+- [Protocol](docs/protocol.md): register, authenticate, send, and receive from any process.
+- [Handoff](docs/handoff.md): status and operational findings.
+- [POC spec](docs/poc-spec.md) and [design notes](docs/design-notes.md): historical
+  milestones and exploration; newer decisions are linked at the top.
+- [Host research](docs/host-adapter-inventory-and-bus-design.md): the original survey.

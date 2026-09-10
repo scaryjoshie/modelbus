@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rpc } from "../client.ts";
+import { createClient, rpc } from "../client.ts";
 import { createDaemon } from "../daemon.ts";
 import { parseToken } from "../identity.ts";
 import { Api, ApiError } from "./api.ts";
@@ -143,15 +143,29 @@ describe("protocol", () => {
         "other:registered",
       ]);
 
-      const sent = await rpc("send", { to: "app", body: "hi app" }, parseToken(other.token), unix);
+      const appClient = createClient(parseToken(app.token), unix);
+      const otherClient = createClient(parseToken(other.token), unix);
+      const sent = await otherClient.request("send", { to: "app", body: "hi app" });
       expect(sent.delivery.status).toBe("queued");
-      const pulled = await rpc("pull", {}, parseToken(app.token), unix);
+      expect(sent.message.fromAgentId).toBe(other.agent.id);
+      expect((await otherClient.request("pull", {})).items).toEqual([]);
+      const pulled = await appClient.request("pull", {});
       expect(pulled.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["other: hi app"]);
       expect(pulled.items[0]?.body).not.toContain("[modelbus"); // pull returns the bare body
 
       await expect(
         rpc("send", { to: "app", body: "x" }, parseToken("nope-nope-nope"), unix),
       ).rejects.toThrow(/unknown token/);
+      await expect(
+        createClient(
+          {
+            kind: "token",
+            id: app.agent.id,
+            secret: "wrong-secret",
+          },
+          unix,
+        ).request("pull", {}),
+      ).rejects.toThrow(/bad token/);
     } finally {
       d.stop();
     }
@@ -160,7 +174,7 @@ describe("protocol", () => {
   test("self identity over the socket: send, pull, who, log; survives restart", async () => {
     const unix = join(dir, "d.sock");
     const path = join(dir, "d.db");
-    let d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
+    let d = createDaemon({ store: new Store(path), unix, providers: [], track: false });
     const alice = { kind: "self", host: "cli", key: "a", name: "alice" } as const;
     const bob = { kind: "self", host: "cli", key: "b", name: "bob" } as const;
     await rpc("bind", {}, bob, unix);
@@ -171,7 +185,7 @@ describe("protocol", () => {
     expect(who.agents.map((x) => x.name).sort()).toEqual(["alice", "bob"]);
     d.stop();
 
-    d = createDaemon({ store: new Store(path), unix, adapters: [], track: false });
+    d = createDaemon({ store: new Store(path), unix, providers: [], track: false });
     expect((await rpc("who", {}, undefined, unix)).agents).toHaveLength(0); // nobody has called in yet
     const pulled = await rpc("pull", {}, bob, unix);
     expect(pulled.items.map((i) => i.body)).toEqual(["over the wire"]);

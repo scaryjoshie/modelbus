@@ -1,5 +1,5 @@
-import type { HostAdapter, Observation, SelfIdentity } from "../../core/adapter.ts";
 import { type DeliveryResult, failed, queued } from "../../core/delivery.ts";
+import type { Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { ancestors, cwdOf, listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
@@ -14,10 +14,14 @@ import { displayNames, isUserMessage, type Thread, threadMeta, threadsForPid } f
  * Receipt: the rollout records the queued text as a user message.
  */
 
-export class CodexAdapter implements HostAdapter {
+export class CodexProvider implements Provider {
   readonly host = "codex";
+  readonly discovery = { observe: this.observe.bind(this) };
+  readonly connector = {
+    deliver: this.deliver.bind(this),
+  };
 
-  async observe(): Promise<Observation[]> {
+  private async observe(): Promise<Observation[]> {
     const procs = (await listProcesses()).filter((p) => p.exe === "codex" && p.tty);
     const found: Array<{ pid: number; startedAt?: number; threads: Thread[]; cwd?: string }> = [];
     for (const p of procs) {
@@ -67,7 +71,7 @@ export class CodexAdapter implements HostAdapter {
     return null;
   }
 
-  async deliver(
+  private async deliver(
     threadId: string,
     text: string,
     marker: string,

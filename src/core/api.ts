@@ -4,10 +4,10 @@ import { GUARDS } from "./guards.ts";
 import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
 /**
- * The bus API: the same handlers serve the CLI, the MCP shim, and any adapter.
+ * The bus API: the runtime invokes the same handlers for every client.
  * Identity (`agentId`) is always resolved by the caller layer; the API never trusts
  * a name in params. Delivery is delegated through `deliver`, supplied by the daemon
- * (the tracker), so the API knows nothing about hosts.
+ * (the provider manager), so the API knows nothing about host implementations.
  */
 
 export type Deliver = (

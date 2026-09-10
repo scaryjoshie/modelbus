@@ -2,17 +2,17 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { allAdapters } from "./adapters/index.ts";
-import type { HostAdapter } from "./core/adapter.ts";
 import { Api, ApiError } from "./core/api.ts";
 import { GUARDS } from "./core/guards.ts";
 import { dbPath, socketPath } from "./core/paths.ts";
 import { newId, Store } from "./core/store.ts";
-import { Tracker } from "./tracker.ts";
+import { allProviders } from "./providers/index.ts";
+import type { Provider } from "./runtime/provider.ts";
+import { ProviderManager } from "./runtime/provider-manager.ts";
 
 /**
- * The daemon is the composition root: one Store, one Api, one Tracker over the
- * configured adapters, one HTTP-over-unix-socket endpoint. Clients POST /rpc with
+ * The daemon is the composition root: one Store, one Api, one ProviderManager over the
+ * configured providers, one HTTP-over-unix-socket endpoint. Clients POST /rpc with
  * { method, params, identity }. The method table below is the protocol; the client
  * derives its types from it.
  *
@@ -61,7 +61,7 @@ interface AnyMethod {
   handler(params: unknown, agentId?: string): unknown;
 }
 
-function buildMethods(store: Store, api: Api, tracker: Tracker) {
+function buildMethods(store: Store, api: Api, providerManager: ProviderManager) {
   return {
     ping: open({ params: z.object({}), handler: () => ({ ok: true, pid: process.pid }) }),
     bind: authed({
@@ -72,7 +72,7 @@ function buildMethods(store: Store, api: Api, tracker: Tracker) {
       params: z.record(z.string(), z.unknown()),
       handler: (p, id) => {
         const agent = store.agentById(id) as Agent;
-        return { agent, attached: tracker.attach(agent, p) };
+        return { agent, attached: providerManager.attach(agent, p) };
       },
     }),
     register: open({
@@ -82,14 +82,14 @@ function buildMethods(store: Store, api: Api, tracker: Tracker) {
         const secret = randomBytes(24).toString("base64url");
         const agent = store.bind({ host: REGISTERED_HOST, key: newId(), name: p.name });
         store.setCredential(agent.id, secret);
-        tracker.touch(agent.id);
+        providerManager.touch(agent.id);
         return { agent, token: `${agent.id}.${secret}` };
       },
     }),
     send: authed({
       params: z.object({ to: z.string(), body: z.string(), wait: z.number().optional() }),
       handler: async (p, id) => {
-        if (!store.agentByName(p.to)) await tracker.reconcile();
+        if (!store.agentByName(p.to)) await providerManager.reconcile();
         return api.send({ fromId: id, ...p });
       },
     }),
@@ -104,8 +104,8 @@ function buildMethods(store: Store, api: Api, tracker: Tracker) {
     who: open({
       params: z.object({ filter: z.string().optional(), fresh: z.boolean().optional() }),
       handler: async (p) => {
-        if (p.fresh) await tracker.reconcile();
-        return { agents: tracker.list(p.filter) };
+        if (p.fresh) await providerManager.reconcile();
+        return { agents: providerManager.list(p.filter) };
       },
     }),
     log: open({
@@ -120,16 +120,16 @@ type Agent = NonNullable<ReturnType<Store["agentById"]>>;
 export type Methods = ReturnType<typeof buildMethods>;
 
 export function createDaemon(
-  opts: { store?: Store; unix?: string; adapters?: HostAdapter[]; track?: boolean } = {},
+  opts: { store?: Store; unix?: string; providers?: Provider[]; track?: boolean } = {},
 ) {
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store);
-  const tracker = new Tracker(store, opts.adapters ?? allAdapters());
+  const providerManager = new ProviderManager(store, opts.providers ?? allProviders());
   api.setDeliver((agent, text, marker, onReceipt) =>
-    tracker.deliver(agent, text, marker, onReceipt),
+    providerManager.deliver(agent, text, marker, onReceipt),
   );
-  if (opts.track !== false) tracker.start();
-  const methods: Record<string, AnyMethod> = buildMethods(store, api, tracker);
+  if (opts.track !== false) providerManager.start();
+  const methods: Record<string, AnyMethod> = buildMethods(store, api, providerManager);
 
   function resolveIdentity(identity: Identity | undefined): string {
     if (!identity) throw new ApiError("identity required");
@@ -138,10 +138,10 @@ export function createDaemon(
       if (!agent || agent.host !== REGISTERED_HOST)
         throw new ApiError("unknown token; register first");
       if (!store.verifyCredential(agent.id, identity.secret)) throw new ApiError("bad token");
-      tracker.touch(agent.id);
+      providerManager.touch(agent.id);
       return agent.id;
     }
-    return tracker.identify(identity).id;
+    return providerManager.identify(identity).id;
   }
 
   async function handle(req: Request): Promise<Response> {
@@ -182,10 +182,10 @@ export function createDaemon(
   return {
     api,
     store,
-    tracker,
+    providerManager,
     unix,
     stop() {
-      tracker.stop();
+      providerManager.stop();
       server.stop(true);
       store.close();
       if (existsSync(unix)) unlinkSync(unix);

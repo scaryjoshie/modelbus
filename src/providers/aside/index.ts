@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import type { HostAdapter, Observation } from "../../core/adapter.ts";
 import { type DeliveryResult, failed, queued } from "../../core/delivery.ts";
+import type { Observation, Provider } from "../../runtime/provider.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
 import { accounts, asideCli, daemonUp, isUserEntry, sessionsOf, transcriptPath } from "./state.ts";
@@ -19,12 +19,16 @@ import { accounts, asideCli, daemonUp, isUserEntry, sessionsOf, transcriptPath }
 /** Sessions untouched for longer than this are not listed. */
 const RECENT_MS = 7 * 24 * 3600 * 1000;
 
-export class AsideAdapter implements HostAdapter {
+export class AsideProvider implements Provider {
   readonly host = "aside";
+  readonly discovery = { observe: this.observe.bind(this) };
+  readonly connector = {
+    deliver: this.deliver.bind(this),
+  };
   /** Which account each observed session belongs to; the CLI needs it. */
   private readonly accountOf = new Map<string, number>();
 
-  async observe(): Promise<Observation[]> {
+  private async observe(): Promise<Observation[]> {
     if (!(await daemonUp())) return [];
     const cli = existsSync(asideCli());
     const recent = (Date.now() - RECENT_MS) / 1000;
@@ -49,7 +53,7 @@ export class AsideAdapter implements HostAdapter {
     return out;
   }
 
-  async deliver(
+  private async deliver(
     sessionId: string,
     text: string,
     marker: string,

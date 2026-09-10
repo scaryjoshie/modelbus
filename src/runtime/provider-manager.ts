@@ -1,19 +1,20 @@
-import type { HostAdapter, Observation } from "./core/adapter.ts";
-import type { DeliveryResult } from "./core/delivery.ts";
-import type { Agent, Store } from "./core/store.ts";
+import type { DeliveryResult } from "../core/delivery.ts";
+import type { Agent, Store } from "../core/store.ts";
+import { discover } from "./discovery.ts";
+import type { Provider } from "./provider.ts";
 
 /**
- * Host-agnostic session tracking. Owns the reconcile loop: ask every adapter what
+ * Host-agnostic session tracking. Owns the reconcile loop: ask every provider what
  * is live, bind each observation to an agent by (host, key), and remember what was
  * seen. Presence lives here in memory, not in the store: it is re-observed every
  * few seconds and only the daemon needs it.
  *
- * An agent is live if an adapter saw it on its last pass, or if it called in
+ * An agent is live if a provider saw it on its last pass, or if it called in
  * recently itself (registered processes and self-identified sessions).
  */
 
 const RECONCILE_INTERVAL_MS = 3000;
-/** An agent that called in this recently counts as live even if no adapter sees it. */
+/** An agent that called in this recently counts as live even if no provider sees it. */
 const CONTACT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface Presence {
@@ -33,9 +34,9 @@ export interface RosterEntry extends Presence {
   lastSeen: number;
 }
 
-export class Tracker {
-  private readonly adapters = new Map<string, HostAdapter>();
-  /** host -> agent id -> what its adapter last observed. */
+export class ProviderManager {
+  private readonly providers = new Map<string, Provider>();
+  /** host -> agent id -> what its provider last observed. */
   private readonly present = new Map<string, Map<string, Presence>>();
   /** agent id -> last time it identified itself on the RPC. */
   private readonly contact = new Map<string, number>();
@@ -44,9 +45,9 @@ export class Tracker {
 
   constructor(
     readonly store: Store,
-    adapters: HostAdapter[],
+    providers: Provider[],
   ) {
-    for (const a of adapters) this.adapters.set(a.host, a);
+    for (const a of providers) this.providers.set(a.host, a);
   }
 
   start(intervalMs = RECONCILE_INTERVAL_MS): void {
@@ -58,7 +59,7 @@ export class Tracker {
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** One pass over every adapter. Concurrent calls share the in-flight pass. */
+  /** One pass over every provider. Concurrent calls share the in-flight pass. */
   reconcile(): Promise<void> {
     this.inFlight ??= this.reconcileOnce().finally(() => {
       this.inFlight = undefined;
@@ -67,23 +68,22 @@ export class Tracker {
   }
 
   private async reconcileOnce(): Promise<void> {
-    for (const adapter of this.adapters.values()) {
-      let observations: Observation[];
-      try {
-        observations = await adapter.observe();
-      } catch {
-        continue; // an adapter failure keeps its last presence rather than marking agents gone
-      }
+    for (const result of await discover([...this.providers.values()])) {
+      // A failed discovery is not evidence that the provider's sessions disappeared.
+      if (result.status === "failed") continue;
       const seen = new Map<string, Presence>();
-      for (const o of observations) {
+      for (const o of result.observations) {
         // Only confirmed top-level sessions become peers; subagents and uncertain
         // classifications never silently turn into agents.
         if (o.relationship !== "top-level") continue;
-        const agent = this.store.bind({ host: adapter.host, key: o.key, name: o.name });
+        // Current POC policy: automatically bind observed top-level sessions.
+        // Discovery itself does not register them; explicit connection can replace
+        // this policy without changing provider discovery or the core API.
+        const agent = this.store.bind({ host: result.host, key: o.key, name: o.name });
         const { key: _key, name: _name, relationship: _rel, ...presence } = o;
         seen.set(agent.id, presence);
       }
-      this.present.set(adapter.host, seen);
+      this.present.set(result.host, seen);
     }
   }
 
@@ -100,25 +100,25 @@ export class Tracker {
     return agent;
   }
 
-  /** Hand adapter-specific runtime info (e.g. a token) to the adapter for this agent. */
+  /** Hand provider-specific runtime info (e.g. a token) to the provider for this agent. */
   attach(agent: Agent, info: Record<string, unknown>): boolean {
-    const adapter = this.adapters.get(agent.host);
-    if (!adapter?.attach) return false;
-    adapter.attach(agent.hostKey, info);
+    const provider = this.providers.get(agent.host);
+    if (!provider?.connector?.attach) return false;
+    provider.connector.attach(agent.hostKey, info);
     return true;
   }
 
-  /** Deliver rendered text into an agent's session via its adapter. */
+  /** Deliver rendered text into an agent's session via its provider. */
   async deliver(
     agent: Agent,
     text: string,
     marker: string,
     onReceipt: () => void,
   ): Promise<DeliveryResult> {
-    const adapter = this.adapters.get(agent.host);
-    if (!adapter?.deliver) return { status: "queued", detail: "waiting for it to sync" };
+    const provider = this.providers.get(agent.host);
+    if (!provider?.connector) return { status: "queued", detail: "waiting for it to sync" };
     try {
-      return await adapter.deliver(agent.hostKey, text, marker, onReceipt);
+      return await provider.connector.deliver(agent.hostKey, text, marker, onReceipt);
     } catch (e) {
       return { status: "failed", detail: e instanceof Error ? e.message : String(e) };
     }

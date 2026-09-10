@@ -1,5 +1,11 @@
 # modelbus design notes
 
+> **2026-09-09:** See [runtime-and-providers.md](runtime-and-providers.md) for the
+> latest discussion of module ownership, independent operations, credentials,
+> web sessions, icons/settings, and shared artifacts. It distinguishes agreed
+> direction from implementation and unresolved choices; older proposals below
+> should not override it.
+
 > **2026-09-08:** the POC exists. See `architecture.md` for what was built and
 > `handoff.md` for status. This file remains the exploration record and the list
 > of OPEN questions; several of its later sections were superseded during the build

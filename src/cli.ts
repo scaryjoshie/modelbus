@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 import { parseArgs } from "node:util";
-import { allAdapters } from "./adapters/index.ts";
 import { type Identity, rpc } from "./client.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { parseToken, whoAmI } from "./identity.ts";
+import { allProviders } from "./providers/index.ts";
 import { renderItem } from "./render.ts";
 
 /**
  * modelbus CLI: a thin client of the daemon. Bus verbs live here; host-specific
- * verbs (hooks, helpers) are contributed by adapters through `commands()`.
+ * setup plans are contributed by providers through `configure()`.
  */
 
 const age = (ms?: number | null) => {
@@ -188,7 +188,7 @@ const commands: Record<string, Command> = {
     standalone: true,
     usage: "init [--write]                         show/apply host configuration",
     async run(args) {
-      const plans = allAdapters()
+      const plans = allProviders()
         .map((a) => a.configure?.())
         .filter((p) => p !== undefined);
       for (const p of plans) for (const line of p.describe) console.log(line);

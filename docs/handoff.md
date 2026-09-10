@@ -1,7 +1,34 @@
 # Handoff (written 2026-09-08, updated 2026-09-09, by the Claude session that built the POC)
 
-Read `architecture.md` for how the code works. This file is what you need to know
-that isn't in the code.
+## September 9 runtime/provider cleanup (Codex)
+
+- Read [runtime-and-providers.md](runtime-and-providers.md) for Joshua's latest
+  direction and the explicitly open questions. It corrects earlier assumptions
+  about mandatory connection flows, prerequisite detection, and web identity.
+- `src/adapters/` is now `src/providers/`; the broad `HostAdapter` interface moved
+  out of core to `src/runtime/provider.ts` as `Provider`. Discovery and connector
+  are independent optional objects. No inheritance or provider framework was added.
+- `Tracker` is now `ProviderManager` in `src/runtime/provider-manager.ts`.
+  `discover(providers)` observes without binding agents or configuring hosts.
+  Reconciliation still applies the POC's automatic top-level binding policy;
+  explicit connection UX is not implemented yet.
+- The MCP shim uses a bound client, which attaches credentials/identity outside
+  tool arguments. The local `self` path remains unverified; no auth overhaul,
+  provider-settings persistence, browser connection, icon UI, or file board was built.
+- Existing SQL, wire fields, host setup commands, and delivery behavior remain.
+  No live host configuration or running daemon was changed by this cleanup.
+  Restart a source-running daemon to load the renamed modules; an old daemon may
+  still refer to the moved Claude posting helper. Restart also forgets its in-memory
+  Claude tokens, so affected sessions need `attach` or a new shim afterward.
+- 22 tests pass, including independent discovery, connector-only providers, and
+  identity separation with bound clients. Socket tests need execution outside
+  Codex's shell sandbox. Type, formatting, and layering checks also pass.
+- Changes are local for review; this pass did not commit or push.
+
+## Earlier POC handoff (historical)
+
+The following records the earlier implementation and live experiments. The cleanup
+above and `architecture.md` supersede its code paths and current status claims.
 
 ## Where things stand
 

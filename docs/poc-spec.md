@@ -1,5 +1,9 @@
 # modelbus POC spec: DM-only protocol, no UI
 
+> **Current direction:** [runtime-and-providers.md](runtime-and-providers.md)
+> records the September 9 provider/runtime discussion and supersedes conflicting
+> architectural proposals below. The milestones here remain a historical record.
+
 > **Status 2026-09-08: the POC described here is built and verified.** The code is
 > documented in `architecture.md`; running status, lessons, and next steps are in
 > `handoff.md`. The sections below record how the spec evolved and remain the

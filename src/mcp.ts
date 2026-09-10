@@ -1,14 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { rpc } from "./client.ts";
+import { createClient } from "./client.ts";
 import { GUARDS } from "./core/guards.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
 
 /**
- * The stdio shim: an MCP server a host spawns per session. It asks the adapters who
+ * The stdio shim: an MCP server a host spawns per session. It asks the providers who
  * it is (identity.ts), then forwards `send` and `who` to the daemon. `sync` is only
  * registered with --with-sync, for hosts that cannot receive automatically.
  * Nothing host-specific lives here.
@@ -22,9 +22,10 @@ const text = (t: string, isError = false) => ({
 export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   await ensureDaemon();
   const { identity, label, attach } = await whoAmI();
-  const me = (await rpc("bind", {}, identity)).agent.name;
-  // Hand the daemon whatever our adapter says it needs to reach this session.
-  if (attach) await rpc("attach", attach, identity).catch(() => undefined);
+  const client = createClient(identity);
+  const me = (await client.request("bind", {})).agent.name;
+  // Hand the daemon whatever our provider says it needs to reach this session.
+  if (attach) await client.request("attach", attach).catch(() => undefined);
 
   const server = new McpServer(
     { name: "modelbus", version: "0.0.0" },
@@ -51,7 +52,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
     },
     async ({ to, body, wait }) => {
       try {
-        const r = await rpc("send", { to, body, wait }, identity);
+        const r = await client.request("send", { to, body, wait });
         const d = r.delivery;
         let out = `sent to ${r.to.name}${d.status === "failed" ? ` (not delivered: ${d.detail})` : ""}`;
         if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
@@ -69,7 +70,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
-      const r = await rpc("who", { filter });
+      const r = await client.request("who", { filter });
       const lines = r.agents
         .filter((a) => a.name !== me && (filter || a.reachable))
         .map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
@@ -88,7 +89,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
         },
       },
       async ({ scope, wait }) => {
-        const r = await rpc("pull", { scope, wait }, identity);
+        const r = await client.request("pull", { scope, wait });
         const lines = r.items.map(renderItem);
         if (r.more) lines.push(`[${r.more} more; call sync again]`);
         if (r.moreElsewhere) lines.push(`[${r.moreElsewhere} unread in other DMs]`);

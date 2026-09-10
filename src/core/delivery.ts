@@ -11,7 +11,7 @@ export type DeliveryStatus =
   /** the push was attempted and failed; the recipient can still pull it */
   | "failed";
 
-/** What an adapter reports right after a push. Receipt comes later, via onReceipt. */
+/** Initial delivery result. Receipt comes later, via onReceipt. */
 export interface DeliveryResult {
   status: "queued" | "failed";
   /** How it was queued, or why it failed. */

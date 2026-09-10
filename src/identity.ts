@@ -1,5 +1,5 @@
-import { allAdapters } from "./adapters/index.ts";
 import type { Identity } from "./client.ts";
+import { allProviders } from "./providers/index.ts";
 
 /** A registration token is `<agentId>.<secret>`: the id names, the secret proves. */
 export function parseToken(token: string): Identity {
@@ -15,9 +15,9 @@ export function parseToken(token: string): Identity {
  *  1. a registration token (MODELBUS_TOKEN), for self-registered processes;
  *  2. a configured identity (MODELBUS_HOST/KEY/NAME), for hosts that spawn one shim
  *     for many sessions and name it in its environment;
- *  3. whichever host adapter recognizes the process it is running inside;
+ *  3. whichever host provider recognizes the process it is running inside;
  *  4. the test-only MODELBUS_AS override.
- * Host-specific knowledge lives only in the adapters.
+ * Host-specific knowledge lives only in the providers.
  */
 export async function whoAmI(opts: { as?: string } = {}): Promise<{
   identity: Identity;
@@ -39,8 +39,8 @@ export async function whoAmI(opts: { as?: string } = {}): Promise<{
       label: MODELBUS_NAME,
     };
   }
-  for (const adapter of allAdapters()) {
-    const me = adapter.identifySelf ? await adapter.identifySelf() : null;
+  for (const provider of allProviders()) {
+    const me = provider.identifySelf ? await provider.identifySelf() : null;
     if (!me) continue;
     return {
       identity: { kind: "self", host: me.host, key: me.key, name: me.name },

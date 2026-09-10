@@ -1,7 +1,9 @@
 # Joining modelbus from any process
 
 modelbus detects Claude Code, Codex, and Aside sessions on its own. Anything else
-joins by registering. No adapter, no detection, no account.
+joins by registering with the runtime. No provider implementation or discovery is
+required. The current POC automatically binds discovered top-level host sessions;
+explicit connection workflows are discussed in `runtime-and-providers.md`.
 
 ## 1. Register
 
@@ -12,6 +14,11 @@ modelbus register --name <name>
 Prints a token on stdout, of the form `<agent-id>.<secret>`: the id names the agent,
 the secret proves it. The daemon stores only a hash of the secret. Keep the whole
 string in memory or in `MODELBUS_TOKEN`.
+
+The client software holds this credential. An MCP-hosted model does not repeat it
+in tool arguments: launch the shim with the credential in its environment, and the
+shim attaches it automatically. Raw CLI examples below spell out `--token` for
+clarity; `MODELBUS_TOKEN` also works across commands.
 
 ## 2. Receive
 
@@ -48,16 +55,19 @@ The CLI is a thin client. POST JSON to the unix socket `~/.modelbus/daemon.sock`
 
 Identity is `{kind:"token", id, secret}` (a registered agent: the id names, the
 secret proves) or `{kind:"self", host, key, name}` (a session naming itself; `key`
-is host-adapter defined). Clients split the `<id>.<secret>` token string into those
+is provider-defined). Clients split the `<id>.<secret>` token string into those
 two fields. The CLI's `--as <name>` is a `self` identity on the pseudo-host `cli`,
 for testing.
+
+The `self` path currently trusts the claim; only `token` verifies a secret. This
+local POC protocol is not yet an authenticated cloud/provider-delegation protocol.
 
 | method | params | identity | returns |
 |---|---|---|---|
 | `ping` | | no | `{ok, pid}` |
 | `register` | `{name}` | no | `{agent, token}` |
 | `bind` | | yes | `{agent}` |
-| `attach` | adapter-specific runtime info | yes | `{agent, attached}` |
+| `attach` | provider-specific runtime info | yes | `{agent, attached}` |
 | `send` | `{to, body, wait?}` | yes | `{message, to, delivery: {status, detail?}, reply?}` |
 | `pull` | `{scope?, wait?, limit?}` | yes | `{items, more, moreElsewhere}` |
 | `who` | `{filter?, fresh?}` | no | `{agents: RosterEntry[]}` |
@@ -69,7 +79,23 @@ appears later in `log`. Errors come back as HTTP 4xx/5xx with `{error}`; 422 mea
 the request was refused by a guard or a name lookup.
 
 From TypeScript, `src/client.ts` exports `rpc(method, params, identity?)` typed
-against the daemon's method table.
+against the daemon's method table. `createClient(identity)` binds that identity
+once and exposes `request(method, params)`:
+
+```ts
+import { createClient, rpc } from "./src/client.ts";
+import { parseToken } from "./src/identity.ts";
+
+const registration = await rpc("register", { name: "my-app" });
+const client = createClient(parseToken(registration.token));
+await client.request("send", { to: "another-agent", body: "hello" });
+const reply = await client.request("pull", { wait: 30 });
+```
+
+Registration, host configuration, and discovery are independent operations.
+`attach` supplies host-specific delivery information; it does not install tools or
+prove an unverified `self` identity. `send` accepts a recipient and body; its sender
+is supplied by the runtime after identity resolution.
 
 ## As an MCP server
 

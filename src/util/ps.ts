@@ -1,6 +1,6 @@
 import { $ } from "bun";
 
-/** Small process-table helpers shared by adapters. */
+/** Small process-table helpers shared by providers. */
 
 export interface ProcInfo {
   pid: number;

@@ -1,8 +1,8 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
-import type { ConfigurePlan } from "../../core/adapter.ts";
 import { cliPath } from "../../core/paths.ts";
+import type { ConfigurePlan } from "../../runtime/provider.ts";
 import { codexHome } from "./threads.ts";
 
 /** What `init` writes for Codex: the MCP server and per-tool pre-approval. */

@@ -1,17 +1,17 @@
-import type { DeliveryResult } from "./delivery.ts";
+import type { DeliveryResult } from "../core/delivery.ts";
 
 /**
- * The boundary between the host-agnostic core and each host.
+ * The runtime's contract with a host integration. Core does not consume it.
  *
- * A host adapter is whoever holds the line to a kind of agent. It reports which
- * sessions exist (`observe`) and pushes text into one (`deliver`). The core knows
- * an agent only by the adapter's `key` for it, which it stores and hands back;
- * everything else the adapter needs it re-derives from its host at call time.
+ * Discovery, communication, self-identification, and setup are independent
+ * capabilities. Grouping them in a provider does not require running them together.
+ * Providers receive no core API or store; the runtime binds identities and routes
+ * delivery. Host keys remain opaque to core.
  */
 
 export type Relationship = "top-level" | "subagent" | "unknown";
 
-/** One live session as an adapter sees it. */
+/** One live session as a provider sees it. */
 export interface Observation {
   /** The host's own identifier for this session. Stable across host restarts if the host's is. */
   key: string;
@@ -19,7 +19,7 @@ export interface Observation {
   name: string;
   /** Only top-level sessions become agents. */
   relationship: Relationship;
-  /** Whether the adapter can deliver into this session right now. */
+  /** Whether the provider can deliver into this session right now. */
   reachable: boolean;
   /** Why not, or how, for humans reading `who`. */
   note?: string;
@@ -35,7 +35,7 @@ export interface SelfIdentity {
   host: string;
   key: string;
   name: string;
-  /** Adapter-specific runtime info to hand the daemon (e.g. a socket and token). */
+  /** Provider-specific runtime info to hand the daemon (e.g. a socket and token). */
   attach?: Record<string, unknown>;
 }
 
@@ -44,14 +44,14 @@ export interface ConfigurePlan {
   apply(): Promise<string[]>;
 }
 
-export interface HostAdapter {
-  readonly host: string;
-  /** Everything live on this host right now. Must not throw; return [] instead. */
+export interface Discovery {
+  /** Current observations. Empty means nothing seen; throw if discovery failed. */
   observe(): Promise<Observation[]>;
-  /** Inside a process the host spawned: which of its sessions is this? Null if not this host. */
-  identifySelf?(): Promise<SelfIdentity | null>;
-  /** Put `text` into the session; call onReceipt later if the adapter can observe it being read. */
-  deliver?(
+}
+
+export interface Connector {
+  /** Put `text` into the session; call onReceipt later if the provider can observe it being read. */
+  deliver(
     key: string,
     text: string,
     marker: string,
@@ -59,6 +59,15 @@ export interface HostAdapter {
   ): Promise<DeliveryResult>;
   /** Accept runtime information a session hands over about itself (secrets stay here). */
   attach?(key: string, info: Record<string, unknown>): void;
+}
+
+export interface Provider {
+  /** Existing wire/storage namespace; not an authentication credential. */
+  readonly host: string;
+  readonly discovery?: Discovery;
+  readonly connector?: Connector;
+  /** Inside a host's child process: which session is this? Null if unrecognized. */
+  identifySelf?(): Promise<SelfIdentity | null>;
   /** What `init` writes for this host. */
   configure?(): ConfigurePlan;
 }
