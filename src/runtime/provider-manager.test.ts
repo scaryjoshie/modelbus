@@ -205,6 +205,28 @@ describe("provider manager", () => {
     }
   });
 
+  test("onReachable fires once when an agent becomes reachable, not while it stays so", async () => {
+    const { host, t } = setup();
+    const seen: string[] = [];
+    t.onReachable = async (a) => {
+      seen.push(a.name);
+    };
+    host.live = [obs("k1", "one", { reachable: false, note: "no turns yet" })];
+    await t.reconcile();
+    expect(seen).toEqual([]); // present but not reachable
+
+    host.live = [obs("k1", "one")];
+    await t.reconcile();
+    await t.reconcile();
+    expect(seen).toEqual(["one"]); // once, not on every pass
+
+    host.live = [];
+    await t.reconcile();
+    host.live = [obs("k1", "one")];
+    await t.reconcile();
+    expect(seen).toEqual(["one", "one"]); // gone and back: again
+  });
+
   test("a failing provider keeps its last presence", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];

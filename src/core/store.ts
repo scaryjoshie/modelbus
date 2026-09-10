@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import type { DeliveryResult, DeliveryStatus } from "./delivery.ts";
+import type { DeliveryResult, DeliveryStatus, Outbound } from "./delivery.ts";
 import { migrationsDir } from "./paths.ts";
 import {
   type AgentRow,
@@ -277,6 +277,27 @@ export class Store {
         ),
       )
       .run();
+  }
+
+  /**
+   * Unread messages for an agent that never reached its host: still `sent`, or the
+   * push `failed`. Oldest first, shaped for the delivery port.
+   */
+  undelivered(agentId: string): Outbound[] {
+    return this.db
+      .select({ message: messages, from: agents })
+      .from(deliveries)
+      .innerJoin(messages, eq(messages.id, deliveries.messageId))
+      .innerJoin(agents, eq(agents.id, messages.fromAgentId))
+      .where(
+        and(
+          eq(deliveries.toAgentId, agentId),
+          isNull(deliveries.readAt),
+          inArray(deliveries.status, ["sent", "failed"]),
+        ),
+      )
+      .orderBy(messages.seq)
+      .all();
   }
 
   /** Messages in a conversation from one sender with seq greater than `afterSeq`. */

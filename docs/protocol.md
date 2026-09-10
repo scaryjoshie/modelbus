@@ -78,10 +78,13 @@ yet; `detail` says why), `delivered` (the recipient's host accepted the push), o
 `failed` (the push was rejected; `detail` says why). `read` appears later in `log`,
 when the host transcript shows the message or a pull returns it.
 
-Two things this protocol does not yet guarantee. A message can sit `delivered`
-forever if the host drops its copy; nothing pushes it again. And `pull` marks
-items `read` as it returns them, so if the connection drops before the response
-arrives, those items are marked read and were never seen. Errors come back as HTTP 4xx/5xx with `{error}`; 422 means
+A message that is `sent` or `failed` is pushed again when its recipient becomes
+reachable, so sending to a session that is closed, or to a Codex thread before its
+first turn, needs no action from the sender. Two things the protocol does not yet
+guarantee. A message can sit `delivered` forever if the host drops its copy;
+nothing pushes it again, since the host may still hold it. And `pull` marks items
+`read` as it returns them, so if the connection drops before the response arrives,
+those items are marked read and were never seen. Errors come back as HTTP 4xx/5xx with `{error}`; 422 means
 the request was refused by a guard or a name lookup.
 
 From TypeScript, `src/client.ts` exports `rpc(method, params, identity?)` typed

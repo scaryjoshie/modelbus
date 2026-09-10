@@ -157,10 +157,20 @@ still pull). A provider's `DeliveryResult` is `delivered` or `failed`; `read` co
 later through `onRead`. "Pending", the sender holding a message the daemon has not
 stored, exists only inside a client.
 
+Retry: when an agent becomes reachable (it was absent or unreachable on the
+previous discovery pass), the manager calls core's `redeliver(agentId)`, which
+pushes that agent's `sent` and `failed` messages again, oldest first, and records
+each result. Core keeps the ids of pushes in flight so a retry never pushes one
+twice. After a daemon start every reachable agent counts as newly reachable, so
+whatever waited while the daemon was down goes out on the first pass. No retry
+counter: a push that fails again stays `failed` until the next reappearance.
+
 Two gaps, stated plainly. Between `delivered` and `read` the host can drop its
 copy (Claude Code exiting with the message still queued); the daemon keeps the
-message but nothing pushes it again. And a pull marks its items `read` as it hands
-them back, so a connection dropped mid-response leaves them marked read and unseen.
+message but does not push it again, because the host may still hold its copy and
+a second push could duplicate it. Untested per host. And a pull marks its items
+`read` as it hands them back, so a connection dropped mid-response leaves them
+marked read and unseen.
 
 ## 7. The provider manager (`runtime/provider-manager.ts`)
 

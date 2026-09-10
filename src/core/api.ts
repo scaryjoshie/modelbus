@@ -30,6 +30,8 @@ export class Api {
   private deliver: Deliver = async () => ({ status: "sent", detail: "no push path" });
   /** conversation:replier pairs someone is currently blocked on inline. */
   private readonly waiting = new Set<string>();
+  /** Message ids with a push in flight, so a retry never pushes one twice. */
+  private readonly pushing = new Set<string>();
   readonly limits: Limits;
 
   constructor(
@@ -75,16 +77,52 @@ export class Api {
 
     // A reply someone is blocked on inline is returned through that call, not also
     // pushed into their host (it would arrive twice).
-    const delivery: DeliveryResult = this.waiting.has(`${conv.id}:${from.id}`)
-      ? { status: "delivered", detail: "returned inline to the waiting sender" }
-      : await this.deliver(to, { message, from }, () => this.store.markRead([message.id], to.id));
-    this.store.recordDelivery(message.id, to.id, delivery);
+    let delivery: DeliveryResult;
+    if (this.waiting.has(`${conv.id}:${from.id}`)) {
+      delivery = { status: "delivered", detail: "returned inline to the waiting sender" };
+      this.store.recordDelivery(message.id, to.id, delivery);
+    } else {
+      delivery = await this.push(to, { message, from });
+    }
 
     const reply =
       opts.wait && opts.wait > 0
         ? await this.waitForReply(from.id, to, conv.id, message.seq, opts.wait)
         : undefined;
     return { message, to, delivery, reply };
+  }
+
+  /** One push through the delivery port, with its result recorded. */
+  private async push(to: Agent, outbound: Outbound): Promise<DeliveryResult> {
+    const id = outbound.message.id;
+    this.pushing.add(id);
+    try {
+      const result = await this.deliver(to, outbound, () => this.store.markRead([id], to.id));
+      this.store.recordDelivery(id, to.id, result);
+      return result;
+    } finally {
+      this.pushing.delete(id);
+    }
+  }
+
+  /**
+   * Push everything still waiting for an agent: sent but never delivered, or the
+   * push failed. The runtime calls this when the agent becomes reachable; core
+   * does not know why. Messages already delivered are left alone: the host may
+   * still hold its copy.
+   */
+  async redeliver(
+    agentId: string,
+  ): Promise<{ delivered: number; failed: number; waiting: number }> {
+    const to = this.store.agentById(agentId);
+    if (!to) throw new ApiError("unknown agent");
+    const counts = { delivered: 0, failed: 0, waiting: 0 };
+    for (const outbound of this.store.undelivered(to.id)) {
+      if (this.pushing.has(outbound.message.id)) continue;
+      const r = await this.push(to, outbound);
+      counts[r.status === "sent" ? "waiting" : r.status]++;
+    }
+    return counts;
   }
 
   private async waitForReply(

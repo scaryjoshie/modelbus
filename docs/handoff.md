@@ -16,6 +16,8 @@ All committed on main. `architecture.md` describes the result; this is the list.
 - The daemon is a login service: `start` / `stop` / `restart` (macOS launchd,
   installed only by the user's explicit `start`). Clients never start the daemon;
   the on-demand spawn is gone. Secrets keeper in the runtime (owner-only files).
+- Redelivery: `sent` and `failed` messages are pushed again when their recipient
+  becomes reachable (manager notices the transition, calls core's `redeliver`).
 - CLAUDE.md gained a "How we work" section at Joshua's request. Read it first.
 
 Decided for the next passes: a secrets keeper inside the daemon (owner-only files,

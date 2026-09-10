@@ -135,6 +135,66 @@ describe("waiting", () => {
   });
 });
 
+describe("redelivery", () => {
+  const withDeliver = (api: Api, status: "sent" | "delivered" | "failed") =>
+    api.setDeliver(async () => ({ status, detail: "fake" }));
+  const statusOf = (api: Api) => api.log({}).map((r) => r.status);
+
+  test("sent and failed messages go out when asked; delivered ones are left alone", async () => {
+    const { api, a, b } = fresh();
+    withDeliver(api, "sent");
+    await api.send({ fromId: a.id, toId: b.id, body: "waiting" });
+    withDeliver(api, "failed");
+    await api.send({ fromId: a.id, toId: b.id, body: "rejected" });
+    withDeliver(api, "delivered");
+    await api.send({ fromId: a.id, toId: b.id, body: "already there" });
+    expect(statusOf(api)).toEqual(["sent", "failed", "delivered"]);
+
+    let pushed: string[] = [];
+    api.setDeliver(async (_to, o) => {
+      pushed.push(o.message.body);
+      return { status: "delivered" };
+    });
+    expect(await api.redeliver(b.id)).toEqual({ delivered: 2, failed: 0, waiting: 0 });
+    expect(pushed).toEqual(["waiting", "rejected"]); // oldest first; the delivered one untouched
+    expect(statusOf(api)).toEqual(["delivered", "delivered", "delivered"]);
+
+    pushed = [];
+    expect(await api.redeliver(b.id)).toEqual({ delivered: 0, failed: 0, waiting: 0 });
+    expect(pushed).toEqual([]);
+  });
+
+  test("a retry that fails again stays failed; a pull-only recipient stays waiting", async () => {
+    const { api, a, b } = fresh();
+    withDeliver(api, "failed");
+    await api.send({ fromId: a.id, toId: b.id, body: "x" });
+    expect(await api.redeliver(b.id)).toEqual({ delivered: 0, failed: 1, waiting: 0 });
+    withDeliver(api, "sent");
+    expect(await api.redeliver(b.id)).toEqual({ delivered: 0, failed: 0, waiting: 1 });
+    expect(statusOf(api)).toEqual(["sent"]);
+    expect((await api.pull({ agentId: b.id })).items.map((i) => i.body)).toEqual(["x"]);
+  });
+
+  test("a push in flight is not pushed a second time", async () => {
+    const { api, a, b } = fresh();
+    let release: () => void = () => undefined;
+    let pushes = 0;
+    api.setDeliver(async () => {
+      pushes++;
+      await new Promise<void>((r) => {
+        release = r;
+      });
+      return { status: "delivered" };
+    });
+    const sending = api.send({ fromId: a.id, toId: b.id, body: "slow" });
+    await Promise.resolve(); // let send reach the push
+    expect(await api.redeliver(b.id)).toEqual({ delivered: 0, failed: 0, waiting: 0 });
+    release();
+    await sending;
+    expect(pushes).toBe(1);
+  });
+});
+
 describe("protocol", () => {
   let dir: string;
   beforeEach(() => {

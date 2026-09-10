@@ -47,6 +47,14 @@ export class ProviderManager {
   private firstPass: Promise<void> = Promise.resolve();
   /** Watches providers started on our behalf and have not finished. */
   private readonly open = new Set<Watch>();
+  /** Agents reachable after the previous pass, to notice who just became reachable. */
+  private wasReachable = new Set<string>();
+  /**
+   * Called once for each agent that is reachable now and was not on the previous
+   * pass. The daemon points this at core's redeliver; the manager does not know
+   * what happens.
+   */
+  onReachable?: (agent: Agent) => Promise<void>;
 
   constructor(
     readonly store: Store,
@@ -104,6 +112,19 @@ export class ProviderManager {
       }
       this.present.set(result.host, seen);
     }
+    await this.noticeReappearances();
+  }
+
+  private async noticeReappearances(): Promise<void> {
+    const now = new Set<string>();
+    for (const a of this.store.listAgents()) {
+      if (!this.presenceOf(a)?.reachable) continue;
+      now.add(a.id);
+      if (this.wasReachable.has(a.id) || !this.onReachable) continue;
+      // One failing callback must not stop the pass or the others.
+      await this.onReachable(a).catch(() => undefined);
+    }
+    this.wasReachable = now;
   }
 
   /** Record that an agent called in (identified itself or used its token). */
