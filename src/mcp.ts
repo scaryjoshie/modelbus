@@ -2,7 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createClient } from "./client.ts";
-import { GUARDS } from "./core/guards.ts";
 import { ensureDaemon } from "./ensure.ts";
 import { whoAmI } from "./identity.ts";
 import { renderItem } from "./render.ts";
@@ -41,13 +40,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       inputSchema: {
         to: z.string().describe("agent name, as shown by who"),
         body: z.string(),
-        wait: z
-          .number()
-          .int()
-          .min(0)
-          .max(GUARDS.MAX_WAIT_SECONDS)
-          .optional()
-          .describe("seconds to wait for a reply"),
+        wait: z.number().int().min(0).optional().describe("seconds to wait for a reply"),
       },
     },
     async ({ to, body, wait }) => {
@@ -85,7 +78,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
         description: "Read messages sent to you that have not been delivered yet.",
         inputSchema: {
           scope: z.string().optional(),
-          wait: z.number().int().min(0).max(GUARDS.MAX_WAIT_SECONDS).optional(),
+          wait: z.number().int().min(0).optional(),
         },
       },
       async ({ scope, wait }) => {

@@ -17,7 +17,7 @@ Core is what would exist with zero known hosts. `scripts/check-layers.ts` enforc
 
 | Layer | Files | May import from |
 |---|---|---|
-| core | `src/core/*` (store, api, guards, schema, delivery, paths) | core only |
+| core | `src/core/*` (store, api, limits, schema, delivery, paths) | core only |
 | helpers | `src/util/*` (process table, transcript watcher) | util only |
 | runtime | `src/runtime/*` (provider contract, discovery, provider manager) | core, util, runtime |
 | providers | `src/providers/<host>/*` | own folder, util, runtime/provider, core/delivery, core/paths |
@@ -72,8 +72,10 @@ and Effective TypeScript. Concretely, in this repo:
   host's own database). Schema lives in `src/core/schema.ts`;
   change it, then `bun run migrate:generate`, and commit the migration. Store only
   what must survive a restart; presence is in memory. Don't add columns nothing reads.
-- Protocol limits live in `src/core/guards.ts`; a timing local to one module is a
-  named constant at the top of that module, with its unit in the name.
+- Numbers callers can tune are options with exported defaults (`src/core/limits.ts`);
+  the library takes them, the daemon passes them in, nothing reads env vars or
+  config files below the composition root. A timing local to one module is a named
+  constant at the top of that module, with its unit in the name.
 - Core never runs a command on an agent's behalf. Providers talk to their hosts'
   own doors; a registered process holds its own line by calling `pull`.
 - Tool surface for agents stays tiny; context cost matters more than features.

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { DeliveryResult, Outbound } from "./delivery.ts";
-import { GUARDS } from "./guards.ts";
+import { DEFAULT_LIMITS, type Limits } from "./limits.ts";
 import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
 /**
@@ -30,8 +30,13 @@ export class Api {
   private deliver: Deliver = async () => ({ status: "sent", detail: "no push path" });
   /** conversation:replier pairs someone is currently blocked on inline. */
   private readonly waiting = new Set<string>();
+  readonly limits: Limits;
 
-  constructor(readonly store: Store) {
+  constructor(
+    readonly store: Store,
+    limits: Partial<Limits> = {},
+  ) {
+    this.limits = { ...DEFAULT_LIMITS, ...limits };
     this.events.setMaxListeners(1000);
   }
 
@@ -52,16 +57,17 @@ export class Api {
     const to = this.store.agentById(opts.toId);
     if (!to) throw new ApiError("recipient is not a known agent");
     if (to.id === from.id) throw new ApiError("cannot send to yourself");
-    if (Buffer.byteLength(opts.body, "utf8") > GUARDS.BODY_CAP_BYTES) {
-      throw new ApiError(`body exceeds ${GUARDS.BODY_CAP_BYTES} bytes`);
+    const { bodyCapBytes, dedupeWindowMs, rateLimit, rateWindowMs } = this.limits;
+    if (Buffer.byteLength(opts.body, "utf8") > bodyCapBytes) {
+      throw new ApiError(`body exceeds ${bodyCapBytes} bytes`);
     }
     if (!opts.body.trim()) throw new ApiError("empty body");
     const conv = this.store.dm(from.id, to.id);
-    if (this.store.identicalRecently(conv.id, from.id, opts.body, GUARDS.DEDUPE_WINDOW_MS) > 0) {
+    if (this.store.identicalRecently(conv.id, from.id, opts.body, dedupeWindowMs) > 0) {
       throw new ApiError("dropped: identical message sent within the last minute");
     }
-    if (this.store.sendsSince(from.id, GUARDS.RATE_WINDOW_MS) >= GUARDS.RATE_LIMIT) {
-      throw new ApiError(`refused: over ${GUARDS.RATE_LIMIT} sends per minute`);
+    if (this.store.sendsSince(from.id, rateWindowMs) >= rateLimit) {
+      throw new ApiError(`refused: over ${rateLimit} sends per ${rateWindowMs / 1000}s`);
     }
     const message = this.store.insertMessage(conv.id, from.id, opts.body);
     this.store.touch(from.id);
@@ -121,7 +127,7 @@ export class Api {
     const me = this.store.agentById(opts.agentId);
     if (!me) throw new ApiError("unknown agent");
     this.store.touch(me.id);
-    const limit = Math.min(opts.limit ?? GUARDS.PULL_LIMIT, GUARDS.PULL_LIMIT);
+    const limit = Math.min(opts.limit ?? this.limits.pullLimit, this.limits.pullLimit);
     const conversationId = opts.scopeId ? this.store.dm(me.id, opts.scopeId).id : undefined;
 
     const take = () => {
@@ -145,7 +151,7 @@ export class Api {
 
   /** Resolve when a matching message event fires or the wait elapses. */
   private awaitEvent(match: (ev: MessageEvent) => boolean, waitSeconds: number): Promise<void> {
-    const deadline = Math.min(waitSeconds, GUARDS.MAX_WAIT_SECONDS) * 1000;
+    const deadline = Math.min(waitSeconds, this.limits.maxWaitSeconds) * 1000;
     return new Promise((resolve) => {
       const onMessage = (ev: MessageEvent) => {
         if (!match(ev)) return;

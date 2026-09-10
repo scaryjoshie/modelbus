@@ -6,7 +6,7 @@ import { createClient, rpc } from "../client.ts";
 import { createDaemon } from "../daemon.ts";
 import { parseToken } from "../identity.ts";
 import { Api, ApiError } from "./api.ts";
-import { GUARDS } from "./guards.ts";
+import { DEFAULT_LIMITS } from "./limits.ts";
 import { Store } from "./store.ts";
 
 const bindTest = (store: Store, key: string, name: string) =>
@@ -66,19 +66,32 @@ describe("guards", () => {
 
   test("rate limit refuses the send after the limit", async () => {
     const { api, a, b } = fresh();
-    for (let i = 0; i < GUARDS.RATE_LIMIT; i++) {
+    for (let i = 0; i < DEFAULT_LIMITS.rateLimit; i++) {
       await api.send({ fromId: a.id, toId: b.id, body: `m${i}` });
     }
     await expect(api.send({ fromId: a.id, toId: b.id, body: "one too many" })).rejects.toThrow(
-      /per minute/,
+      /over 10 sends/,
     );
   });
 
   test("body cap", async () => {
     const { api, a, b } = fresh();
     await expect(
-      api.send({ fromId: a.id, toId: b.id, body: "x".repeat(GUARDS.BODY_CAP_BYTES + 1) }),
+      api.send({ fromId: a.id, toId: b.id, body: "x".repeat(DEFAULT_LIMITS.bodyCapBytes + 1) }),
     ).rejects.toThrow(/exceeds/);
+  });
+
+  test("limits are options; unspecified ones keep their defaults", async () => {
+    const store = new Store(":memory:");
+    const api = new Api(store, { bodyCapBytes: 8, rateLimit: 1 });
+    const a = bindTest(store, "a", "alice");
+    const b = bindTest(store, "b", "bob");
+    expect(api.limits.pullLimit).toBe(DEFAULT_LIMITS.pullLimit);
+    await expect(api.send({ fromId: a.id, toId: b.id, body: "123456789" })).rejects.toThrow(
+      /exceeds 8/,
+    );
+    await api.send({ fromId: a.id, toId: b.id, body: "ok" });
+    await expect(api.send({ fromId: a.id, toId: b.id, body: "two" })).rejects.toThrow(/over 1/);
   });
 });
 

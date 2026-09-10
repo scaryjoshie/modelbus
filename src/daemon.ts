@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { Api, ApiError } from "./core/api.ts";
-import { GUARDS } from "./core/guards.ts";
+import type { Limits } from "./core/limits.ts";
 import { dbPath, socketPath } from "./core/paths.ts";
 import { newId, Store } from "./core/store.ts";
 import { allProviders } from "./providers/index.ts";
@@ -136,10 +136,16 @@ type Agent = NonNullable<ReturnType<Store["agentById"]>>;
 export type Methods = ReturnType<typeof buildMethods>;
 
 export function createDaemon(
-  opts: { store?: Store; unix?: string; providers?: Provider[]; track?: boolean } = {},
+  opts: {
+    store?: Store;
+    unix?: string;
+    providers?: Provider[];
+    track?: boolean;
+    limits?: Partial<Limits>;
+  } = {},
 ) {
   const store = opts.store ?? new Store(dbPath());
-  const api = new Api(store);
+  const api = new Api(store, opts.limits);
   const providerManager = new ProviderManager(store, opts.providers ?? allProviders());
   api.setDeliver((to, outbound, onRead) => providerManager.deliver(to, outbound, onRead));
   if (opts.track !== false) providerManager.start();
@@ -183,8 +189,8 @@ export function createDaemon(
   const unix = opts.unix ?? socketPath();
   mkdirSync(dirname(unix), { recursive: true });
   if (existsSync(unix)) unlinkSync(unix);
-  if (GUARDS.MAX_WAIT_SECONDS >= IDLE_TIMEOUT_SECONDS) {
-    throw new Error("MAX_WAIT_SECONDS must be below the socket idle timeout");
+  if (api.limits.maxWaitSeconds >= IDLE_TIMEOUT_SECONDS) {
+    throw new Error("limits.maxWaitSeconds must be below the socket idle timeout");
   }
   // Bun's unix-socket option type omits idleTimeout, so the options object is cast.
   const server = Bun.serve({

@@ -17,7 +17,7 @@ Premise: stop the user being the relay between their own tools.
 ```
 src/
   core/        store.ts (all SQL), schema.ts (Drizzle tables), api.ts (send/pull),
-               guards.ts, delivery.ts (result type), paths.ts
+               limits.ts (tunable policy, with defaults), delivery.ts (result type), paths.ts
   runtime/     provider.ts (Provider, Discovery, Connector, identity/setup contracts),
                discovery.ts (observe without registration),
                provider-manager.ts (reconciliation, presence, routing, roster)
@@ -234,9 +234,14 @@ Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `attach`, `init`,
 socket. `MODELBUS_HOME` points clients at another instance. The CLI starts the
 daemon on demand for every command that needs it.
 
-## 11. Limits (`core/guards.ts`)
+## 11. Limits (`core/limits.ts`)
 
-Dedupe window 60 s, 10 sends per sender per minute, 64 KB body, 240 s max wait
-(below Bun's 255 s socket idle timeout), 50 items per pull. Timings local to one
-module (reconcile interval, socket timeouts, watcher polling) are named constants
-at the top of that module. No wake budget, no hop counter, no contact policy in v0.
+Every limit is an option with an exported default: `new Api(store, limits)` and
+`createDaemon({ limits })` take a partial `Limits` and fill in `DEFAULT_LIMITS`.
+Defaults: dedupe window 60 s, 10 sends per sender per minute, 64 KB body, 240 s max
+wait (below Bun's 255 s socket idle timeout; the daemon checks this at startup),
+50 items per pull. Nothing reads them from the environment or a config file yet;
+that arrives with settings. Clients do not enforce them: the shim passes `wait`
+through and the daemon caps it. Timings local to one module (reconcile interval,
+socket timeouts, watcher polling) are named constants at the top of that module.
+No wake budget, no hop counter, no contact policy in v0.
