@@ -172,8 +172,10 @@ provider receipt watchers remain lifecycle work, as recorded in the design notes
 ## 8. A send, end to end (`core/api.ts`)
 
 1. RPC `send { to, body, wait? }` with an identity. The method table validates
-   params and resolves the identity to the sender's agent id.
-2. Recipient resolved by name (after one reconcile pass if unknown).
+   params, resolves the identity to the sender's agent id, and resolves the
+   recipient's name to an id (after one reconcile pass if unknown). Core only
+   ever sees ids; the "try who" wording belongs to the daemon.
+2. Core looks both agents up by id.
 3. Guards: body ≤ 64 KB, not identical to something the sender wrote in this DM in
    the last 60 s, sender under 10 sends per minute. Refusals are `ApiError` → 422.
 4. Message + delivery row inserted in one transaction; an in-process event fires so

@@ -62,6 +62,12 @@ interface AnyMethod {
 }
 
 function buildMethods(store: Store, api: Api, providerManager: ProviderManager) {
+  /** Clients address agents by display name; core only knows ids. */
+  const agentNamed = (name: string): Agent => {
+    const agent = store.agentByName(name);
+    if (!agent) throw new ApiError(`no agent named "${name}"; try who`);
+    return agent;
+  };
   return {
     ping: open({ params: z.object({}), handler: () => ({ ok: true, pid: process.pid }) }),
     bind: authed({
@@ -90,7 +96,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       params: z.object({ to: z.string(), body: z.string(), wait: z.number().optional() }),
       handler: async (p, id) => {
         if (!store.agentByName(p.to)) await providerManager.reconcile();
-        return api.send({ fromId: id, ...p });
+        return api.send({ fromId: id, toId: agentNamed(p.to).id, body: p.body, wait: p.wait });
       },
     }),
     pull: authed({
@@ -99,7 +105,13 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
         wait: z.number().optional(),
         limit: z.number().optional(),
       }),
-      handler: (p, id) => api.pull({ agentId: id, ...p }),
+      handler: (p, id) =>
+        api.pull({
+          agentId: id,
+          scopeId: p.scope ? agentNamed(p.scope).id : undefined,
+          wait: p.wait,
+          limit: p.limit,
+        }),
     }),
     who: open({
       params: z.object({ filter: z.string().optional(), fresh: z.boolean().optional() }),
@@ -110,7 +122,11 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     }),
     log: open({
       params: z.object({ a: z.string().optional(), b: z.string().optional() }),
-      handler: (p) => ({ rows: api.log(p) }),
+      handler: (p) => ({
+        rows: api.log({
+          between: p.a && p.b ? [agentNamed(p.a).id, agentNamed(p.b).id] : undefined,
+        }),
+      }),
     }),
   };
 }

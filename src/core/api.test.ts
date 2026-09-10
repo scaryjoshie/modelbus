@@ -23,7 +23,7 @@ function fresh() {
 describe("dm basics", () => {
   test("send then pull delivers once", async () => {
     const { api, a, b } = fresh();
-    await api.send({ fromId: a.id, to: "bob", body: "hi bob" });
+    await api.send({ fromId: a.id, toId: b.id, body: "hi bob" });
     const first = await api.pull({ agentId: b.id });
     expect(first.items.map((i) => `${i.fromName}: ${i.body}`)).toEqual(["alice: hi bob"]);
     const second = await api.pull({ agentId: b.id });
@@ -31,8 +31,8 @@ describe("dm basics", () => {
   });
 
   test("sender does not receive own message", async () => {
-    const { api, a } = fresh();
-    await api.send({ fromId: a.id, to: "bob", body: "x" });
+    const { api, a, b } = fresh();
+    await api.send({ fromId: a.id, toId: b.id, body: "x" });
     expect((await api.pull({ agentId: a.id })).items).toHaveLength(0);
   });
 
@@ -48,10 +48,10 @@ describe("dm basics", () => {
 
   test("unknown recipient and self-send are errors", async () => {
     const { api, a } = fresh();
-    await expect(api.send({ fromId: a.id, to: "nobody", body: "x" })).rejects.toBeInstanceOf(
+    await expect(api.send({ fromId: a.id, toId: "nobody", body: "x" })).rejects.toBeInstanceOf(
       ApiError,
     );
-    await expect(api.send({ fromId: a.id, to: "alice", body: "x" })).rejects.toBeInstanceOf(
+    await expect(api.send({ fromId: a.id, toId: a.id, body: "x" })).rejects.toBeInstanceOf(
       ApiError,
     );
   });
@@ -59,25 +59,25 @@ describe("dm basics", () => {
 
 describe("guards", () => {
   test("identical message within window is dropped", async () => {
-    const { api, a } = fresh();
-    await api.send({ fromId: a.id, to: "bob", body: "same" });
-    await expect(api.send({ fromId: a.id, to: "bob", body: "same" })).rejects.toThrow(/identical/);
+    const { api, a, b } = fresh();
+    await api.send({ fromId: a.id, toId: b.id, body: "same" });
+    await expect(api.send({ fromId: a.id, toId: b.id, body: "same" })).rejects.toThrow(/identical/);
   });
 
   test("rate limit refuses the send after the limit", async () => {
-    const { api, a } = fresh();
+    const { api, a, b } = fresh();
     for (let i = 0; i < GUARDS.RATE_LIMIT; i++) {
-      await api.send({ fromId: a.id, to: "bob", body: `m${i}` });
+      await api.send({ fromId: a.id, toId: b.id, body: `m${i}` });
     }
-    await expect(api.send({ fromId: a.id, to: "bob", body: "one too many" })).rejects.toThrow(
+    await expect(api.send({ fromId: a.id, toId: b.id, body: "one too many" })).rejects.toThrow(
       /per minute/,
     );
   });
 
   test("body cap", async () => {
-    const { api, a } = fresh();
+    const { api, a, b } = fresh();
     await expect(
-      api.send({ fromId: a.id, to: "bob", body: "x".repeat(GUARDS.BODY_CAP_BYTES + 1) }),
+      api.send({ fromId: a.id, toId: b.id, body: "x".repeat(GUARDS.BODY_CAP_BYTES + 1) }),
     ).rejects.toThrow(/exceeds/);
   });
 });
@@ -86,7 +86,7 @@ describe("waiting", () => {
   test("pull(wait) resolves when a message arrives", async () => {
     const { api, a, b } = fresh();
     const pending = api.pull({ agentId: b.id, wait: 5 });
-    setTimeout(() => api.send({ fromId: a.id, to: "bob", body: "late" }), 20);
+    setTimeout(() => api.send({ fromId: a.id, toId: b.id, body: "late" }), 20);
     const r = await pending;
     expect(r.items[0]?.body).toBe("late");
   });
@@ -94,12 +94,12 @@ describe("waiting", () => {
   test("send(wait) returns the reply and consumes only that DM", async () => {
     const { store, api, a, b } = fresh();
     const c = bindTest(store, "c", "carol");
-    await api.send({ fromId: c.id, to: "alice", body: "unrelated from carol" });
-    const pending = api.send({ fromId: a.id, to: "bob", body: "question?", wait: 5 });
+    await api.send({ fromId: c.id, toId: a.id, body: "unrelated from carol" });
+    const pending = api.send({ fromId: a.id, toId: b.id, body: "question?", wait: 5 });
     setTimeout(async () => {
       const inbox = await api.pull({ agentId: b.id });
       expect(inbox.items[0]?.body).toBe("question?");
-      await api.send({ fromId: b.id, to: "alice", body: "answer!" });
+      await api.send({ fromId: b.id, toId: a.id, body: "answer!" });
     }, 20);
     const r = await pending;
     expect(r.reply?.body).toBe("answer!");
@@ -111,9 +111,9 @@ describe("waiting", () => {
   test("scoped pull leaves other DMs unread", async () => {
     const { store, api, a, b } = fresh();
     const c = bindTest(store, "c", "carol");
-    await api.send({ fromId: a.id, to: "bob", body: "from alice" });
-    await api.send({ fromId: c.id, to: "bob", body: "from carol" });
-    const scoped = await api.pull({ agentId: b.id, scope: "carol" });
+    await api.send({ fromId: a.id, toId: b.id, body: "from alice" });
+    await api.send({ fromId: c.id, toId: b.id, body: "from carol" });
+    const scoped = await api.pull({ agentId: b.id, scopeId: c.id });
     expect(scoped.items.map((i) => i.body)).toEqual(["from carol"]);
     expect(scoped.more).toBe(0);
     expect(scoped.moreElsewhere).toBe(1);
@@ -208,8 +208,8 @@ describe("persistence", () => {
     let store = new Store(path);
     let api = new Api(store);
     const a = bindTest(store, "a", "alice");
-    bindTest(store, "b", "bob");
-    await api.send({ fromId: a.id, to: "bob", body: "before restart" });
+    const b = bindTest(store, "b", "bob");
+    await api.send({ fromId: a.id, toId: b.id, body: "before restart" });
     store.close();
 
     store = new Store(path);

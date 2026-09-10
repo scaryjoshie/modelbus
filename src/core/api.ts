@@ -5,9 +5,10 @@ import type { Agent, InboxItem, Message, Store } from "./store.ts";
 
 /**
  * The bus API: the runtime invokes the same handlers for every client.
- * Identity (`agentId`) is always resolved by the caller layer; the API never trusts
- * a name in params. Delivery is delegated through `deliver`, supplied by the daemon
- * (the provider manager), so the API knows nothing about host implementations.
+ * Agents are addressed by id only. The caller layer resolves identity and any
+ * display names before calling in. Delivery is delegated through `deliver`,
+ * supplied by the daemon (the provider manager), so the API knows nothing about
+ * host implementations.
  */
 
 export type Deliver = (
@@ -38,23 +39,18 @@ export class Api {
     this.deliver = fn;
   }
 
-  resolveName(name: string): Agent {
-    const a = this.store.agentByName(name);
-    if (!a) throw new ApiError(`no agent named "${name}"; try who`);
-    return a;
-  }
-
   // ---- send ---------------------------------------------------------------
 
   async send(opts: {
     fromId: string;
-    to: string;
+    toId: string;
     body: string;
     wait?: number;
   }): Promise<{ message: Message; to: Agent; delivery: DeliveryResult; reply?: InboxItem }> {
     const from = this.store.agentById(opts.fromId);
     if (!from) throw new ApiError("sender is not a known agent");
-    const to = this.resolveName(opts.to);
+    const to = this.store.agentById(opts.toId);
+    if (!to) throw new ApiError("recipient is not a known agent");
     if (to.id === from.id) throw new ApiError("cannot send to yourself");
     if (Buffer.byteLength(opts.body, "utf8") > GUARDS.BODY_CAP_BYTES) {
       throw new ApiError(`body exceeds ${GUARDS.BODY_CAP_BYTES} bytes`);
@@ -115,9 +111,10 @@ export class Api {
 
   // ---- pull (sync) --------------------------------------------------------
 
+  /** `scopeId` limits the read to the DM with that agent. */
   async pull(opts: {
     agentId: string;
-    scope?: string;
+    scopeId?: string;
     wait?: number;
     limit?: number;
   }): Promise<{ items: InboxItem[]; more: number; moreElsewhere: number }> {
@@ -125,9 +122,7 @@ export class Api {
     if (!me) throw new ApiError("unknown agent");
     this.store.touch(me.id);
     const limit = Math.min(opts.limit ?? GUARDS.PULL_LIMIT, GUARDS.PULL_LIMIT);
-    const conversationId = opts.scope
-      ? this.store.dm(me.id, this.resolveName(opts.scope).id).id
-      : undefined;
+    const conversationId = opts.scopeId ? this.store.dm(me.id, opts.scopeId).id : undefined;
 
     const take = () => {
       const items = this.store.inbox(me.id, { conversationId, limit });
@@ -171,11 +166,9 @@ export class Api {
 
   // ---- log ----------------------------------------------------------------
 
-  log(opts: { a?: string; b?: string }) {
-    const conversationId =
-      opts.a && opts.b
-        ? this.store.dm(this.resolveName(opts.a).id, this.resolveName(opts.b).id).id
-        : undefined;
+  /** Every message, or only the DM between two agent ids. */
+  log(opts: { between?: [string, string] }) {
+    const conversationId = opts.between ? this.store.dm(...opts.between).id : undefined;
     return this.store.log(conversationId);
   }
 }
