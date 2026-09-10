@@ -132,14 +132,6 @@ above and `architecture.md` supersede its code paths and current status claims.
 - Shell gotcha: zsh doesn't word-split `$VAR`; use a function. Commit messages with
   `<...>` inside double quotes broke; use `-F file`.
 
-## Live sessions Joshua uses
-
-Names are the agent names on the bus. His Codex review session is titled "Review
-concept feasibility" (was `codex-2`; Codex renames after the first turn). This
-Claude session was `modelbus-8f`. A second Claude session `modelbus-ca` and extra
-Codex sessions were started by me for tests, in cmux tabs in his MODELBUS workspace;
-he may close them.
-
 ## Candidate next steps (his call)
 
 1. Aside session identity via tool-call metadata; then `send --wait` matches Aside

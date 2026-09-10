@@ -57,6 +57,13 @@ would consume it today. This is the working method, not a preference:
 - Verify against the running code and the real hosts before stating a fact.
   Documentation establishes possibilities, not working integrations.
 
+## Public repo
+
+This repository is public. Nothing personal about its author goes in: no absolute
+home paths, email addresses, machine or workspace names, session titles, or
+descriptions of what is running on any particular machine. Write paths relative to
+the checkout or as `~/...`. Examples use invented names.
+
 ## Conventions
 
 Follow the TypeScript handbook's Do's and Don'ts, the Google TypeScript style guide,
