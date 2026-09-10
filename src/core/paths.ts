@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,10 @@ export function ensureHome(): string {
   const home = modelbusHome();
   mkdirSync(home, { recursive: true, mode: 0o700 });
   chmodSync(home, 0o700);
-  for (const name of readdirSync(home)) chmodSync(join(home, name), 0o600);
+  for (const name of readdirSync(home)) {
+    const p = join(home, name);
+    chmodSync(p, statSync(p).isDirectory() ? 0o700 : 0o600);
+  }
   return home;
 }
 

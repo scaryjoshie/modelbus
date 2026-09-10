@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a21c96f1-676b-469f-b00b-8a18e942d848",
+  "id": "422793f2-0ba4-4570-b9e8-9a3c173f76d7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "agents": {
@@ -179,7 +179,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'queued'"
+          "default": "'sent'"
         },
         "detail": {
           "name": "detail",
@@ -188,8 +188,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "received_at": {
-          "name": "received_at",
+        "read_at": {
+          "name": "read_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -201,7 +201,7 @@
           "name": "deliveries_inbox",
           "columns": [
             "to_agent_id",
-            "received_at"
+            "read_at"
           ],
           "isUnique": false
         }

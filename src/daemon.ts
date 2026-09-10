@@ -1,14 +1,15 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { Api, ApiError } from "./core/api.ts";
 import type { Limits } from "./core/limits.ts";
-import { dbPath, ensureHome, socketPath } from "./core/paths.ts";
+import { dbPath, ensureHome, modelbusHome, socketPath } from "./core/paths.ts";
 import { newId, Store } from "./core/store.ts";
 import { allProviders } from "./providers/index.ts";
 import type { Provider } from "./runtime/provider.ts";
 import { ProviderManager } from "./runtime/provider-manager.ts";
+import { fileSecrets } from "./runtime/secrets.ts";
 
 /**
  * The daemon is the composition root: one Store, one Api, one ProviderManager over the
@@ -148,7 +149,11 @@ export function createDaemon(
 ) {
   const store = opts.store ?? new Store(dbPath());
   const api = new Api(store, opts.limits);
-  const providerManager = new ProviderManager(store, opts.providers ?? allProviders());
+  const providerManager = new ProviderManager(
+    store,
+    opts.providers ??
+      allProviders({ secrets: (host) => fileSecrets(join(modelbusHome(), "secrets"), host) }),
+  );
   api.setDeliver((to, outbound, onRead) => providerManager.deliver(to, outbound, onRead));
   if (opts.track !== false) providerManager.start();
   const methods: Record<string, AnyMethod> = buildMethods(store, api, providerManager);

@@ -1,6 +1,12 @@
 import { existsSync } from "node:fs";
 import { delivered, failed, type Outbound } from "../../core/delivery.ts";
-import type { Delivered, Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
+import type {
+  Delivered,
+  Observation,
+  Provider,
+  Secrets,
+  SelfIdentity,
+} from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
@@ -17,17 +23,12 @@ import { currentSession, liveSessions } from "./registry.ts";
  * Delivery: post to the session's inbox socket. With the session's token (handed
  * over by the SessionStart hook or `modelbus attach`) the message goes in with no
  * dialog in any permission mode. Without it the session's inbound rules decide,
- * which may mean a dialog for the user. Tokens are kept in memory only.
+ * which may mean a dialog for the user. Tokens are remembered through the daemon's
+ * secrets, keyed by session id, and forgotten when the session is no longer live.
  *
  * Read: a transcript entry containing the marker, either `queue-operation`
  * `remove` (queued mid-turn) or a `user` entry (attached to a turn).
  */
-
-interface Attached {
-  socketPath?: string;
-  token?: string;
-  transcriptPath?: string;
-}
 
 export class ClaudeCodeProvider implements Provider {
   readonly host = "claude-code";
@@ -36,11 +37,18 @@ export class ClaudeCodeProvider implements Provider {
     deliver: this.deliver.bind(this),
     attach: this.attach.bind(this),
   };
-  private readonly attached = new Map<string, Attached>();
+  /** Session tokens, by session id. Absent outside the daemon, where nothing is delivered. */
+  private readonly secrets: Secrets | undefined;
+
+  constructor(secretsFor?: (host: string) => Secrets) {
+    this.secrets = secretsFor?.(this.host);
+  }
 
   private async observe(): Promise<Observation[]> {
     const procs = new Map((await listProcesses()).map((p) => [p.pid, p]));
-    return liveSessions().map((s) => ({
+    const sessions = liveSessions();
+    this.forgetGone(new Set(sessions.map((s) => s.sessionId)));
+    return sessions.map((s) => ({
       key: s.sessionId,
       name: s.name,
       relationship: "top-level",
@@ -56,29 +64,24 @@ export class ClaudeCodeProvider implements Provider {
   async identifySelf(): Promise<SelfIdentity | null> {
     const s = await currentSession();
     if (!s) return null;
-    const socketPath = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+    const token = process.env.CLAUDE_CODE_MESSAGING_TOKEN;
     return {
       host: this.host,
       key: s.sessionId,
       name: s.name,
-      attach: socketPath
-        ? {
-            socketPath,
-            token: process.env.CLAUDE_CODE_MESSAGING_TOKEN,
-            transcriptPath: s.transcriptPath,
-          }
-        : undefined,
+      attach: token ? { token } : undefined,
     };
   }
 
+  /** Only the token needs remembering; the socket and transcript come from the registry. */
   private attach(sessionId: string, info: Record<string, unknown>): void {
-    const prev = this.attached.get(sessionId) ?? {};
-    const str = (v: unknown, fallback?: string) => (typeof v === "string" ? v : fallback);
-    this.attached.set(sessionId, {
-      socketPath: str(info.socketPath, prev.socketPath),
-      token: str(info.token, prev.token),
-      transcriptPath: str(info.transcriptPath, prev.transcriptPath),
-    });
+    if (typeof info.token === "string") this.secrets?.set(sessionId, info.token);
+  }
+
+  /** Drop tokens of sessions that are gone. A resumed session re-attaches from its hook. */
+  private forgetGone(live: Set<string>): void {
+    if (!this.secrets) return;
+    for (const id of this.secrets.list()) if (!live.has(id)) this.secrets.delete(id);
   }
 
   private async deliver(
@@ -86,15 +89,15 @@ export class ClaudeCodeProvider implements Provider {
     outbound: Outbound,
     onRead: () => void,
   ): Promise<Delivered> {
-    const a = this.attached.get(sessionId) ?? {};
     const reg = liveSessions().find((s) => s.sessionId === sessionId);
-    const socketPath = a.socketPath ?? reg?.socketPath;
-    const transcriptPath = a.transcriptPath ?? reg?.transcriptPath;
+    const socketPath = reg?.socketPath;
+    const transcriptPath = reg?.transcriptPath;
+    const token = this.secrets?.get(sessionId);
     if (!socketPath) return { result: failed("no inbox socket") };
     if (!existsSync(socketPath)) return { result: failed("inbox socket missing") };
     const { text, marker } = attributed(outbound);
     const fromOffset = transcriptPath ? fileOffset(transcriptPath) : 0;
-    await postViaHelper(socketPath, a.token, text);
+    await postViaHelper(socketPath, token, text);
     const watch = transcriptPath
       ? watchTranscript({
           path: transcriptPath,
@@ -104,7 +107,7 @@ export class ClaudeCodeProvider implements Provider {
           onFound: onRead,
         })
       : undefined;
-    const result = a.token
+    const result = token
       ? delivered("inbox socket, with token")
       : delivered("inbox socket, no token: the session may ask its user");
     return { result, watch };

@@ -185,19 +185,21 @@ UI can use the schema and a generic persistence helper without understanding eac
 setting. Configuration files are the preferred direction; their exact layout,
 schema format, update protocol, and reload behavior are not implemented yet.
 
-Claude's proposed setting controls whether its own session token is captured and
-used for delivery. Joshua is willing to persist that token. Persistence/re-attachment,
-cleanup, disabling the setting, and resume/rotation behavior need explicit handling;
-do not claim resume stability has been tested. Current tokens remain memory-only.
+Settled 2026-09-10 (Joshua): the daemon keeps a secrets store that providers
+register values with, backed by owner-only files, no OS keychain (Mac-specific, and
+not trusted), and nothing of it in core or core's database. Claude's session tokens
+now persist there across daemon restarts and are forgotten when the session is
+gone. A setting to turn capture off waits for settings to exist; resume behavior
+is untested.
 
 Icons are provider metadata. Built-in providers can bundle assets; external apps
 can supply them. The runtime may retain/cache assets and metadata so the UI and
 historical conversations can display them after disconnect. Core does not interpret
 icon formats or serve images. Asset storage, overrides, and the UI remain future work.
 
-Provider-private secrets are distinct from user-visible settings. Reusing generic
-storage plumbing does not transfer semantic ownership to core, and ownership does
-not require every provider to implement its own file parser.
+Provider-private secrets are distinct from user-visible settings, and from core's
+data: they never share core's database. The runtime owns the bytes and the file
+permissions; each provider owns the meaning of what it stores.
 
 ## Artifacts and a temporary file board
 

@@ -20,7 +20,8 @@ src/
                limits.ts (tunable policy, with defaults), delivery.ts (result type), paths.ts
   runtime/     provider.ts (Provider, Discovery, Connector, identity/setup contracts),
                discovery.ts (observe without registration),
-               provider-manager.ts (reconciliation, presence, routing, roster)
+               provider-manager.ts (reconciliation, presence, routing, roster),
+               secrets.ts (what providers ask the daemon to remember; owner-only files)
   util/        ps.ts (process table, ancestors), watch.ts (transcript watcher, file events),
                attribution.ts (default plain-text form of a message, and its read mark)
   providers/   one folder per host: index.ts (the class), the host's layout,
@@ -117,7 +118,17 @@ Provider.connector?                     Connector object
   attach?(key, info)                     accept host runtime information
 Provider.identifySelf?()                 -> SelfIdentity | null
 Provider.configure?()                    -> ConfigurePlan
+
+Secrets (handed to a provider at construction by the daemon)
+  get(name) / set(name, value) / delete(name) / list()
 ```
+
+`Secrets` is what the daemon remembers for one provider across restarts: values the
+provider names and interprets. Each provider gets its own; it cannot see another's.
+The implementation (`runtime/secrets.ts`) is one owner-only JSON file per provider
+under `~/.modelbus/secrets/`, replaced whole through a temp file and rename. Core
+has no part in it. Outside the daemon (CLI, shim) providers get no `Secrets`; they
+only run setup and self-identification there.
 
 This is a runtime contract, not a core port. Discovery, communication, identity
 lookup, and setup are independent. A connector can exist without discovery, and
@@ -127,8 +138,8 @@ Built-in providers group their capabilities in one class to share host state.
 An `Observation` is the key, the preferred name, the relationship (`top-level` |
 `subagent` | `unknown`), reachability, and display facts (note, pid, cwd, status,
 title). Only `top-level` observations become agents. Anything else a provider needs
-at delivery time it re-derives from its host, or keeps in its own memory (Claude
-tokens, Aside's session-to-account map).
+at delivery time it re-derives from its host, keeps in its own memory (Aside's
+session-to-account map), or asks the daemon to remember through `Secrets`.
 
 `deliver` receives an `Outbound` (`core/delivery.ts`): the stored message row and
 the sender's agent row. Core does not render text. The connector chooses the host's
@@ -208,11 +219,13 @@ for pull-only recipients and the explicit catch-up (`sync`) for everyone else.
 
 Claude Code specifics: the token is consulted only if the posting process has
 exited, hence the helper (`providers/claude-code/post.ts`, run as its own process).
-Sessions started before `init`, or whose token the daemon has forgotten after a
-restart, are delivered "no token" until they run `attach` or a new shim starts and
-attaches. An already-running shim does not re-attach on each tool call. Claude Code
-may ask the user before injecting without the token. The SessionStart hook
-is `modelbus attach`.
+The provider keeps each session's token in its `Secrets`, keyed by session id, so
+a daemon restart does not lose it; on each observe it forgets tokens of sessions no
+longer live (a resumed session re-attaches from its hook). Sessions started before
+`init` are delivered "no token" until they run `attach` or a new shim starts and
+attaches. Claude Code may ask the user before injecting without the token. The
+SessionStart hook is `modelbus attach`. Whether a token stays valid across
+`--resume` is untested.
 
 Codex specifics: a thread with no turns yet cannot be queued to ("no rollout
 found"), shown as not reachable. Codex reads config at launch; sessions started

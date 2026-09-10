@@ -19,9 +19,8 @@ bun run src/cli.ts send --to <name> "text"
 ```
 
 Sending requires an identified session or registration credential. Host setup may
-require restarting the host to load its tools. Claude's delivery token currently
-lives only in provider memory and is lost when the modelbus daemon restarts;
-affected sessions re-attach on their next shim start or `modelbus attach`.
+require restarting the host to load its tools. Claude's delivery token is kept by
+the daemon across restarts and forgotten when the session ends.
 After updating this source checkout, restart a running daemon to load the changes.
 Everything under `~/.modelbus` is readable by its owner only.
 

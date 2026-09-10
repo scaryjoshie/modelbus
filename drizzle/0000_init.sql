@@ -26,15 +26,15 @@ CREATE TABLE `credentials` (
 CREATE TABLE `deliveries` (
 	`message_id` text NOT NULL,
 	`to_agent_id` text NOT NULL,
-	`status` text DEFAULT 'queued' NOT NULL,
+	`status` text DEFAULT 'sent' NOT NULL,
 	`detail` text,
-	`received_at` integer,
+	`read_at` integer,
 	PRIMARY KEY(`message_id`, `to_agent_id`),
 	FOREIGN KEY (`message_id`) REFERENCES `messages`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`to_agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE INDEX `deliveries_inbox` ON `deliveries` (`to_agent_id`,`received_at`);--> statement-breakpoint
+CREATE INDEX `deliveries_inbox` ON `deliveries` (`to_agent_id`,`read_at`);--> statement-breakpoint
 CREATE TABLE `messages` (
 	`seq` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`id` text NOT NULL,

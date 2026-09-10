@@ -40,6 +40,19 @@ export interface SelfIdentity {
   attach?: Record<string, unknown>;
 }
 
+/**
+ * What the daemon remembers for one provider across restarts: small values the
+ * provider names and interprets, such as a session's delivery token. Each provider
+ * is handed its own; it cannot see another provider's entries.
+ */
+export interface Secrets {
+  get(name: string): string | undefined;
+  set(name: string, value: string): void;
+  delete(name: string): void;
+  /** Names currently stored, so a provider can forget what it no longer sees. */
+  list(): string[];
+}
+
 export interface ConfigurePlan {
   describe: string[];
   apply(): Promise<string[]>;
