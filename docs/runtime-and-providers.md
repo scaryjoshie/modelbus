@@ -352,6 +352,14 @@ its queue; the daemon as a login service that clients never start; a web door
 
 ### Deferred, on purpose
 
+- **Batching on delivery.** A message that cannot be pushed on its own (recipient
+  not reachable, or a policy that holds low-priority messages) need not be pushed
+  separately later: it could ride along with the next message that does go
+  through, as one delivery carrying several messages. Redelivery today pushes
+  each waiting message on its own; the provider contract would need to accept a
+  list, and the read mark would cover the batch. Not built; recorded as a
+  possibility Joshua raised (2026-09-11).
+
 - Settings as a config file: the limits, the token capture toggle, poll interval.
 - Pull acknowledgment: a dropped connection can lose pulled messages (gap 2).
 - Aside messages attributed per session rather than per account.
