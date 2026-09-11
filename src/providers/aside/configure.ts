@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { cliPath } from "../../core/paths.ts";
 import type { ConfigurePlan } from "../../runtime/provider.ts";
 import { accounts, usersDir } from "./state.ts";
@@ -17,35 +19,33 @@ const serverEntry = (account: number) => ({
   command: process.execPath,
   args: [cliPath(), "mcp"],
   env: {
-    MODELBUS_HOST: "aside",
+    MODELBUS_PROVIDER: "aside",
     MODELBUS_KEY: `account:${account}`,
     MODELBUS_NAME: account === 0 ? "aside" : `aside-${account}`,
   },
 });
 
-const inventory = () => ({
-  tools: [
-    {
-      name: "send",
-      description: "Message another agent on this machine by name.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          to: { type: "string" },
-          body: { type: "string" },
-          wait: { type: "number" },
-        },
-        required: ["to", "body"],
-      },
-    },
-    {
-      name: "who",
-      description: "List the agents on this machine.",
-      inputSchema: { type: "object", properties: { filter: { type: "string" } } },
-    },
-  ],
-  refreshedAt: new Date().toISOString(),
-});
+/**
+ * The tool inventory Aside caches: exactly what the shim serves, asked of a shim
+ * started the way Aside would start it. A hand-copied list drifts; this cannot.
+ */
+async function inventory(account: number): Promise<{ tools: unknown[]; refreshedAt: string }> {
+  const entry = serverEntry(account);
+  const transport = new StdioClientTransport({
+    command: entry.command,
+    args: entry.args,
+    env: { ...process.env, ...entry.env },
+    stderr: "ignore",
+  });
+  const client = new Client({ name: "modelbus-init", version: "0" });
+  try {
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    return { tools, refreshedAt: new Date().toISOString() };
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
 
 interface Settings {
   mcp?: { servers?: Record<string, unknown>; inventories?: Record<string, unknown> };
@@ -65,7 +65,7 @@ export function configure(): ConfigurePlan {
         s.mcp = {
           ...mcp,
           servers: { ...mcp.servers, modelbus: serverEntry(a) },
-          inventories: { ...mcp.inventories, modelbus: inventory() },
+          inventories: { ...mcp.inventories, modelbus: await inventory(a) },
         };
         writeFileSync(path, `${JSON.stringify(s, null, 2)}\n`);
         done.push(`aside u/${a}: wrote mcp.servers.modelbus + inventory`);
