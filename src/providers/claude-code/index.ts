@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type {
   Delivered,
@@ -60,6 +60,8 @@ export class ClaudeCodeProvider implements Provider {
       cwd: s.cwd,
       status: s.status,
       startedAt: procs.get(s.pid)?.startedAt,
+      // The transcript grows whenever the session does anything.
+      activeAt: existsSync(s.transcriptPath) ? statSync(s.transcriptPath).mtimeMs : undefined,
     }));
   }
 

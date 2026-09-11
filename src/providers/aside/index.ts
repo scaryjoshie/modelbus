@@ -17,6 +17,8 @@ import { accounts, asideCli, daemonUp, isUserEntry, sessionsOf, transcriptPath }
  * sends is attributed to the account (`init` names it in the shim's environment).
  */
 
+/** How long a handle's id part is: enough to tell sessions apart, short enough to type. */
+const HANDLE_ID_CHARS = 4;
 /** Sessions untouched for longer than this are not listed. */
 const RECENT_MS = 7 * 24 * 3600 * 1000;
 
@@ -41,13 +43,14 @@ export class AsideProvider implements Provider {
         const subagent = Boolean(s.parent_id) || (s.trigger ?? "").includes('"subagent"');
         out.push({
           key: s.id,
-          name: s.title || `aside-${s.id}`,
+          name: `aside-${String(s.id).replace(/-/g, "").slice(-HANDLE_ID_CHARS)}`,
           relationship: subagent ? "subagent" : "top-level",
           reachable: cli,
           note: cli ? undefined : "Aside CLI not installed (~/.local/bin/aside)",
           status: s.status,
-          title: s.title,
+          title: s.title || undefined,
           startedAt: s.created_at * 1000,
+          activeAt: s.updated_at * 1000,
         });
       }
     }

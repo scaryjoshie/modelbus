@@ -12,7 +12,9 @@ const agent = (id: string, extra: Partial<Agent> = {}): Agent => ({
   id,
   name: id,
   host: "north-shell",
+  activeAt: NOW - 5000,
   lastSeen: NOW - 5000,
+  purpose: null,
   reachable: true,
   ...extra,
 });
@@ -78,7 +80,7 @@ describe("drawDetail in the agents view", () => {
       "status    working",
       "title     fix tests",
       "dir       /srv/project",
-      `seen      5s ago  ${clock(NOW - 5000)}`,
+      `active    5s ago  ${clock(NOW - 5000)}`,
       "",
       "  1s ada → bo delivered",
       "  first",
@@ -99,9 +101,9 @@ describe("drawDetail in the agents view", () => {
     const bo = draw(state({ selectedAgentId: "bo" }));
     expect(styleAt(bo, 10, 1)).toBe(hostStyle(roster, "zephyr"));
     expect(styleAt(bo, 10, 3)).toBe(hostStyle(roster, "zephyr"));
-    // No title, so "seen" is the seventh field.
+    // No purpose or title, so "active" is the seventh field.
     const seen = g.text(7);
-    expect(seen).toMatch(/^seen {6}5s ago/);
+    expect(seen).toMatch(/^active {4}5s ago/);
     expect(styleAt(g, seen.indexOf("ago"), 7)).toBe("plain");
     expect(styleAt(g, seen.indexOf(":"), 7)).toBe("dim");
   });

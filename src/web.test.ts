@@ -45,7 +45,7 @@ describe("web door", () => {
     const a = await chat(web.url);
     const b = await chat(web.url);
     const tools = (await a.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["join", "send", "sync", "who"]);
+    expect(tools).toEqual(["join", "send", "status", "sync", "who"]);
 
     const joinA = textOf(await a.callTool({ name: "join", arguments: { name: "planner" } }));
     const joinB = textOf(await b.callTool({ name: "join", arguments: { name: "reviewer" } }));

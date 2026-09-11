@@ -285,6 +285,16 @@ describe("groups and names", () => {
     expect(() => api.rename(b.id, "#nope")).toThrow(/start with #/);
   });
 
+  test("describe sets one line of purpose; empty clears it", () => {
+    const { store, api, a } = fresh();
+    expect(api.describe(a.id, "  reviews auth changes\nsecond line ignored ").purpose).toBe(
+      "reviews auth changes",
+    );
+    expect(store.agentById(a.id)?.purpose).toBe("reviews auth changes");
+    expect(api.describe(a.id, "   ").purpose).toBeNull();
+    expect(() => api.describe("nope", "x")).toThrow(/unknown agent/);
+  });
+
   test("chats overview and history paging", async () => {
     const { store, api, a, b, ab } = fresh();
     const c = bindTest(store, "c", "carol");

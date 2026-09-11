@@ -135,9 +135,18 @@ export class Store {
       lastSeen: now,
       namePinned: 0,
       formerName: null,
+      purpose: null,
     };
     this.db.insert(agents).values(agent).run();
     return agent;
+  }
+
+  /** Set or clear what an agent is for. */
+  setPurpose(agentId: string, purpose: string | null): Agent | undefined {
+    const agent = this.agentById(agentId);
+    if (!agent) return undefined;
+    this.db.update(agents).set({ purpose }).where(eq(agents.id, agentId)).run();
+    return { ...agent, purpose };
   }
 
   /**

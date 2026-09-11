@@ -1,10 +1,11 @@
+import { existsSync, statSync } from "node:fs";
 import { delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type { Delivered, Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { ancestors, cwdOf, listProcesses } from "../../util/ps.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
 import { configure } from "./configure.ts";
-import { displayNames, isUserMessage, type Thread, threadMeta, threadsForPid } from "./threads.ts";
+import { handle, isUserMessage, type Thread, threadMeta, threadsForPid } from "./threads.ts";
 
 /**
  * Codex (OpenAI).
@@ -35,14 +36,13 @@ export class CodexProvider implements Provider {
         cwd: await cwdOf(p.pid),
       });
     }
-    const names = displayNames(found.flatMap((f) => f.threads.filter((t) => t.root)));
     const out: Observation[] = [];
     for (const f of found) {
       for (const t of f.threads) {
         const queueable = t.root && Boolean(t.rolloutPath);
         out.push({
           key: t.id,
-          name: names.get(t.id) ?? `codex-${t.id.slice(0, 4)}`,
+          name: handle(t),
           relationship: t.root ? "top-level" : t.parentId ? "subagent" : "unknown",
           reachable: queueable,
           note:
@@ -53,6 +53,10 @@ export class CodexProvider implements Provider {
           cwd: t.cwd ?? f.cwd,
           title: t.title,
           startedAt: f.startedAt,
+          activeAt:
+            t.rolloutPath && existsSync(t.rolloutPath)
+              ? statSync(t.rolloutPath).mtimeMs
+              : undefined,
         });
       }
     }
@@ -68,7 +72,7 @@ export class CodexProvider implements Provider {
       return {
         host: this.host,
         key: root.id,
-        name: displayNames([root]).get(root.id) ?? "codex-1",
+        name: handle(root),
       };
     }
     return null;

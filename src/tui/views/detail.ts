@@ -83,14 +83,17 @@ function agentLines(state: State, agent: Agent, w: number): Line[] {
     field("reachable", reachable),
     field("status", plain(agent.status ?? "")),
   ];
+  if (agent.purpose) lines.push(field("purpose", plain(agent.purpose)));
   if (agent.title) lines.push(field("title", plain(agent.title)));
-  lines.push(
-    field("dir", plain(shortenHome(agent.cwd))),
-    field("seen", [
-      { text: `${age(agent.lastSeen, state.now)} ago`, style: "plain" },
-      { text: `  ${clock(agent.lastSeen)}`, style: "dim" },
-    ]),
-  );
+  lines.push(field("dir", plain(shortenHome(agent.cwd))));
+  if (agent.activeAt !== undefined) {
+    lines.push(
+      field("active", [
+        { text: `${age(agent.activeAt, state.now)} ago`, style: "plain" },
+        { text: `  ${clock(agent.activeAt)}`, style: "dim" },
+      ]),
+    );
+  }
   const groups = groupsLine(state, agent);
   if (groups.length > 0) lines.push(field("in", groups));
   lines.push([]);

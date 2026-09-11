@@ -112,12 +112,13 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       },
     }),
     register: open({
-      params: z.object({ name: z.string().min(1) }),
+      params: z.object({ name: z.string().min(1), purpose: z.string().max(200).optional() }),
       handler: (p) => {
         // Identity (a fresh non-secret key) and the proof (a secret) are distinct.
         const secret = randomBytes(24).toString("base64url");
-        const agent = store.bind({ host: REGISTERED_HOST, key: newId(), name: p.name });
+        let agent = store.bind({ host: REGISTERED_HOST, key: newId(), name: p.name });
         store.setCredential(agent.id, secret);
+        if (p.purpose) agent = api.describe(agent.id, p.purpose);
         providerManager.touch(agent.id);
         return { agent, token: `${agent.id}.${secret}` };
       },
@@ -134,6 +135,13 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
           body: p.body,
           wait: p.wait,
         });
+      },
+    }),
+    status: authed({
+      params: z.object({ text: z.string().max(200) }),
+      handler: (p, id) => {
+        providerManager.setStatus(id, p.text);
+        return { ok: true };
       },
     }),
     pull: authed({
@@ -206,6 +214,15 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     rename: open({
       params: z.object({ agent: z.string(), name: z.string() }),
       handler: (p) => ({ agent: api.rename(agentNamed(p.agent).id, p.name) }),
+    }),
+    describe: scoped({
+      /** Without `agent`, the caller describes itself: agents manage their own purpose. */
+      params: z.object({ agent: z.string().optional(), purpose: z.string().max(200) }),
+      handler: (p, id) => {
+        const target = p.agent ? agentNamed(p.agent).id : id;
+        if (!target) throw new ApiError("say which agent, or call with an identity");
+        return { agent: api.describe(target, p.purpose) };
+      },
     }),
     conversations: open({
       params: z.object({}),

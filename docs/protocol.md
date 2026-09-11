@@ -66,7 +66,7 @@ local POC protocol is not yet an authenticated cloud/provider-delegation protoco
 | method | params | identity | returns |
 |---|---|---|---|
 | `ping` | | no | `{ok, pid}` |
-| `register` | `{name}` | no | `{agent, token}` |
+| `register` | `{name, purpose?}` | no | `{agent, token}` |
 | `bind` | | yes | `{agent}` |
 | `attach` | provider-specific runtime info | yes | `{agent, attached}` |
 | `send` | `{to, body, wait?}`; `to` is an agent name or `#group` | yes | `{message, conversation, deliveries: [{to, status, detail?}], reply?}` |
@@ -75,6 +75,8 @@ local POC protocol is not yet an authenticated cloud/provider-delegation protoco
 | `log` | `{conversation?}`: `#group` or `a,b` | no | `{rows}` |
 | `group` | `{name, add?, remove?}` | no | `{conversation, members}` |
 | `rename` | `{agent, name}` | no | `{agent}` |
+| `describe` | `{agent?, purpose}`: what it is for; empty clears; without `agent`, the caller's own | optional | `{agent}` |
+| `status` | `{text}`: what the caller is doing now; empty clears; presence only | yes | `{ok}` |
 | `conversations` | | no | `{conversations}` |
 | `history` | `{conversation, before?, limit?}` | no | `{items}` |
 

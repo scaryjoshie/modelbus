@@ -7,13 +7,14 @@ import { age, fitRight, truncate, width } from "../text.ts";
 import { drawEmpty, EMPTY, REGISTER_HINT } from "./empty.ts";
 
 /**
- * The roster: one row per agent (a mark when it is pending, then name, host,
- * reachability, status, age of last seen), the cursor row inverse, sorted and
+ * The roster: one row per agent (a mark when it is pending, then name, purpose,
+ * host, reachability, status, last active), the cursor row inverse, sorted and
  * filtered by `filter.ts`. A name and its host tag share the host's hue, so the
  * color says where an agent runs and the tag is its legend; the mark is accent.
- * Columns are sized from the whole visible list, so
- * scrolling never shifts one; when the pane is narrow the least useful columns
- * go first (age, then status, then host) and the name keeps the rest.
+ * The purpose column shows what a person or the agent said it is for, else the
+ * host's own title. Columns are sized from the whole visible list, so scrolling
+ * never shifts one; when the pane is narrow the least useful columns go first
+ * (host, then active, then status) and the purpose keeps the rest.
  */
 
 /** The pending mark: one cell at the row's left, blank on unmarked rows. */
@@ -22,12 +23,18 @@ export const PENDING_MARK = "●";
 const MARK_COLS = 2;
 /** Cells between two columns. */
 const GAP_COLS = 2;
-/** "999d" is the widest age `text.age` produces. */
-const AGE_COLS = 4;
+/** "999d" is the widest age `text.age` produces; "now" fits too. */
+const ACTIVE_COLS = 4;
+/** Activity this recent reads as "now" even when the host reports no status. */
+const ACTIVE_NOW_MS = 10_000;
+/** Host statuses that mean the session is working right now. */
+const WORKING_STATUSES = new Set(["busy", "shell"]);
+/** Names are short handles; longer ones get an ellipsis so the purpose keeps its room. */
+const NAME_MAX_COLS = 18;
+/** A purpose column narrower than this reads worse than one column fewer. */
+const PURPOSE_MIN_COLS = 12;
 /** "up" or "down". */
 const REACH_COLS = 4;
-/** A name column narrower than this reads worse than one column fewer. */
-const NAME_MIN_COLS = 10;
 /** Widest a host name may push the name column; longer ones get an ellipsis. */
 const HOST_MAX_COLS = 12;
 const STATUS_MAX_COLS = 16;
@@ -43,10 +50,22 @@ const UNREACHABLE = "down";
 /** Column widths in cells; 0 means the column is not drawn. */
 export interface Columns {
   name: number;
+  purpose: number;
   host: number;
   reach: number;
   status: number;
-  age: number;
+  active: number;
+}
+
+/** What the purpose column shows: what someone said the agent is for, else the host's title. */
+export const purposeText = (agent: Agent): string => agent.purpose ?? agent.title ?? "";
+
+/** "now" while the host says the session is working or it just did something; else an age. */
+export function activeText(agent: Agent, now: number): string {
+  const working = agent.status !== undefined && WORKING_STATUSES.has(agent.status);
+  if (working || (agent.activeAt !== undefined && now - agent.activeAt < ACTIVE_NOW_MS))
+    return "now";
+  return agent.activeAt === undefined ? "" : age(agent.activeAt, now);
 }
 
 const widest = (values: Array<string | undefined>): number =>
@@ -59,31 +78,36 @@ function reachText(agent: Agent, cols: number): string {
   return note !== "" && cols > REACH_COLS ? `${UNREACHABLE} ${note}` : UNREACHABLE;
 }
 
-/** Cells everything but the name takes: the mark, and each drawn column with its gap. */
+/** Cells everything but the purpose takes: the mark, and each drawn column with its gap. */
 const used = (c: Columns): number =>
   MARK_COLS +
-  [c.host, c.reach, c.status, c.age].reduce((sum, w) => (w > 0 ? sum + w + GAP_COLS : sum), 0);
+  [c.name, c.host, c.reach, c.status, c.active].reduce(
+    (sum, w) => (w > 0 ? sum + w + GAP_COLS : sum),
+    0,
+  );
 
-/** Widths for `rows` in a pane `w` cells wide; the name column takes what is left. */
+/** Widths for `rows` in a pane `w` cells wide; the purpose column takes what is left. */
 export function columns(w: number, rows: Agent[]): Columns {
   const c: Columns = {
-    name: 0,
+    name: Math.max(1, Math.min(widest(rows.map((a) => a.name)), NAME_MAX_COLS)),
+    purpose: 0,
     host: Math.min(widest(rows.map((a) => a.host)), HOST_MAX_COLS),
     reach: REACH_COLS,
     status: Math.min(widest(rows.map((a) => a.status)), STATUS_MAX_COLS),
-    age: AGE_COLS,
+    active: ACTIVE_COLS,
   };
-  const dropOrder: Array<keyof Columns> = ["age", "status", "host"];
+  const dropOrder: Array<keyof Columns> = ["host", "active", "status"];
   for (const key of dropOrder) {
-    if (w - used(c) >= NAME_MIN_COLS) break;
+    if (w - used(c) >= PURPOSE_MIN_COLS) break;
     c[key] = 0;
   }
-  c.name = Math.max(1, w - used(c));
-  // A note is worth reading only when the names are not paying for it.
+  c.purpose = Math.max(0, w - used(c));
+  if (c.purpose === 0) c.name = Math.max(1, w - used({ ...c, name: 0 }));
+  // A note is worth reading only when the purpose is not paying for it.
   const notes = rows.filter((a) => !a.reachable).map((a) => reachText(a, Infinity));
   const wide = Math.min(widest(notes), REACH_NOTE_MAX_COLS);
-  if (wide > c.reach && c.name - (wide - c.reach) >= NAME_ROOMY_COLS) {
-    c.name -= wide - c.reach;
+  if (wide > c.reach && c.purpose - (wide - c.reach) >= NAME_ROOMY_COLS) {
+    c.purpose -= wide - c.reach;
     c.reach = wide;
   }
   return c;
@@ -111,6 +135,10 @@ function drawRow(row: Row, rect: Rect, c: Columns, now: number, roster: Agent[],
   x += MARK_COLS;
   grid.put(x, y, truncate(agent.name, c.name), style(hostStyle(roster, agent.host)), c.name);
   x += c.name + GAP_COLS;
+  if (c.purpose > 0) {
+    grid.put(x, y, truncate(purposeText(agent), c.purpose), style("plain"), c.purpose);
+    x += c.purpose + GAP_COLS;
+  }
   if (c.host > 0) {
     grid.put(x, y, truncate(agent.host, c.host), style(hostStyle(roster, agent.host)), c.host);
     x += c.host + GAP_COLS;
@@ -127,7 +155,10 @@ function drawRow(row: Row, rect: Rect, c: Columns, now: number, roster: Agent[],
     grid.put(x, y, truncate(agent.status ?? "", c.status), style("plain"), c.status);
     x += c.status + GAP_COLS;
   }
-  if (c.age > 0) grid.put(x, y, fitRight(age(agent.lastSeen, now), c.age), style("dim"), c.age);
+  if (c.active > 0) {
+    const text = activeText(agent, now);
+    grid.put(x, y, fitRight(text, c.active), style(text === "now" ? "ok" : "dim"), c.active);
+  }
 }
 
 export function drawAgents(state: State, rect: Rect, grid: Grid): void {

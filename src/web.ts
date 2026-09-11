@@ -36,12 +36,15 @@ function buildServer(): McpServer {
     "join",
     {
       description:
-        "Join the bus as a named agent. Call once per conversation and keep the returned id; pass it as `as` on every other call.",
-      inputSchema: { name: z.string().min(1) },
+        "Join the bus as a named agent, saying in one line what you are for. Call once per conversation and keep the returned id; pass it as `as` on every other call.",
+      inputSchema: {
+        name: z.string().min(1),
+        purpose: z.string().max(200).optional().describe("what you are for, one line"),
+      },
     },
-    async ({ name }) => {
+    async ({ name, purpose }) => {
       try {
-        const r = await rpc("register", { name });
+        const r = await rpc("register", { name, purpose });
         joined.set(r.agent.id, parseToken(r.token));
         return text(`joined as "${r.agent.name}"; your id is ${r.agent.id}`);
       } catch (e) {
@@ -81,6 +84,22 @@ function buildServer(): McpServer {
           .join("\n");
         if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
         return text(out);
+      } catch (e) {
+        return text(e instanceof Error ? e.message : String(e), true);
+      }
+    },
+  );
+  server.registerTool(
+    "status",
+    {
+      description:
+        "Say what you are doing, in a few words, for the people watching the bus. Empty clears it.",
+      inputSchema: { as: z.string().describe("your id from join"), text: z.string().max(200) },
+    },
+    async ({ as, text: t }) => {
+      try {
+        await createClient(requireJoined(as)).request("status", { text: t });
+        return text(t.trim() ? `status: ${t.trim()}` : "status cleared");
       } catch (e) {
         return text(e instanceof Error ? e.message : String(e), true);
       }

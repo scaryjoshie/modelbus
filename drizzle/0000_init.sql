@@ -5,7 +5,8 @@ CREATE TABLE `agents` (
 	`host_key` text NOT NULL,
 	`last_seen` integer NOT NULL,
 	`name_pinned` integer DEFAULT 0 NOT NULL,
-	`former_name` text
+	`former_name` text,
+	`purpose` text
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `agents_name_unique` ON `agents` (`name`);--> statement-breakpoint

@@ -113,14 +113,12 @@ export async function threadsForPid(pid: number): Promise<Thread[]> {
   return threads;
 }
 
-/** Unnamed roots are numbered by creation order (thread ids are time-ordered). */
-export function displayNames(roots: Thread[]): Map<string, string> {
-  const names = new Map<string, string>();
-  let n = 1;
-  for (const t of [...roots].sort((a, b) => a.id.localeCompare(b.id))) {
-    names.set(t.id, t.name ?? `codex-${n++}`);
-  }
-  return names;
+/** How long a handle's id part is: enough to tell threads apart, short enough to type. */
+const HANDLE_ID_CHARS = 4;
+
+/** A thread's short handle: Codex's own name if it has one, else `codex-` and the id's tail. */
+export function handle(t: Thread): string {
+  return t.name ?? `codex-${t.id.replace(/-/g, "").slice(-HANDLE_ID_CHARS)}`;
 }
 
 /** A rollout line recording a user message (how Codex records queued text). */

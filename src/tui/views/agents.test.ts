@@ -13,6 +13,8 @@ const agent = (name: string, host: string, extra: Partial<Agent> = {}): Agent =>
   host,
   cwd: `/home/someone/work/${name}`,
   lastSeen: NOW - 5 * MINUTE_MS,
+  activeAt: NOW - 5 * MINUTE_MS,
+  purpose: null,
   reachable: true,
   ...extra,
 });
@@ -64,7 +66,7 @@ describe("drawAgents", () => {
     expect(grid.text(1).trimEnd()).toBe("  agents");
     expect(grid.text(2)).toMatch(/^ {4}writer\s+apex\s+up\s+5m$/);
     expect(grid.text(3)).toMatch(/^ {4}planner\s+north-shell\s+up\s+idle\s+5m$/);
-    expect(grid.text(4)).toMatch(/^ {4}tester\s+zephyr\s+down\s+busy\s+5m$/);
+    expect(grid.text(4)).toMatch(/^ {4}tester\s+zephyr\s+down\s+busy\s+now$/); // busy reads as now
     expect(grid.text(5).trim()).toBe("");
     // Every row fills the pane's width and none spills past it.
     for (const y of [2, 3, 4]) expect(grid.text(y).length).toBe(62);
@@ -81,12 +83,35 @@ describe("drawAgents", () => {
     expect(styleOf(grid, "idle", 2)).toBe("plain");
   });
 
-  test("ages sit at the right edge of the age column, dim", () => {
+  test("last activity sits at the right edge, dim; a working session reads 'now' in ok", () => {
     const { grid } = draw(stateWith(roster), 60, 6);
     const row = grid.text(1);
     expect(row.endsWith("5m")).toBe(true);
     expect(styleAt(grid, row.length - 1, 1)).toBe("dim");
     expect(styleAt(grid, row.length - 3, 1)).toBe("dim");
+    const busy = draw(stateWith(roster, { selectedAgentId: undefined }), 60, 6).grid;
+    expect(busy.text(3).endsWith("now")).toBe(true); // tester is busy
+    expect(styleAt(busy, busy.text(3).length - 1, 3)).toBe("ok");
+    const recent = [agent("fresh", "apex", { activeAt: NOW - 3000 })];
+    expect(draw(stateWith(recent), 60, 3).grid.text(1).endsWith("now")).toBe(true);
+    const never = [agent("quiet", "apex", { activeAt: undefined })];
+    expect(draw(stateWith(never), 60, 3).grid.text(1).trimEnd().endsWith("up")).toBe(true);
+  });
+
+  test("the purpose column shows what someone said the agent is for, else the host's title", () => {
+    const rows = [
+      agent("a", "apex", {
+        purpose: "reviews auth changes",
+        title: "ignored when a purpose is set",
+      }),
+      agent("b", "apex", { title: "Step-by-step deployment plan" }),
+      agent("c", "apex"),
+    ];
+    const { grid } = draw(stateWith(rows, { selectedAgentId: undefined }), 80, 5);
+    expect(grid.text(1)).toContain("reviews auth changes");
+    expect(grid.text(1)).not.toContain("ignored");
+    expect(grid.text(2)).toContain("Step-by-step deployment plan");
+    expect(styleOf(grid, "reviews", 1)).toBe("plain");
   });
 
   test("reachability is ok or bad", () => {
@@ -151,18 +176,46 @@ describe("drawAgents", () => {
     expect(top.text(1).indexOf("h ")).toBe(scrolled.text(1).indexOf("h "));
   });
 
-  test("narrow panes drop the age, then the status, then the host, and truncate names", () => {
+  test("names are capped, the purpose takes the slack, and narrow panes drop host, active, status", () => {
     const rows = [agent("a-very-long-agent-name-indeed", "north-shell", { status: "idle" })];
-    // The mark column takes 2; host, reach, status and age with their gaps take 31 more.
-    const wide = columns(60, rows);
-    expect(wide).toEqual({ name: 60 - 2 - 31, host: 11, reach: 4, status: 4, age: 4 });
-    // Under 10 cells of name the rightmost remaining column goes, one at a time.
-    expect(columns(38, rows)).toEqual({ name: 11, host: 11, reach: 4, status: 4, age: 0 });
-    expect(columns(32, rows)).toEqual({ name: 11, host: 11, reach: 4, status: 0, age: 0 });
-    expect(columns(12, rows)).toEqual({ name: 4, host: 0, reach: 4, status: 0, age: 0 });
+    // Mark 2; name capped at 18 (+2); host 11, reach 4, status 4, active 4, each +2: 53 in all.
+    expect(columns(80, rows)).toEqual({
+      name: 18,
+      purpose: 27,
+      host: 11,
+      reach: 4,
+      status: 4,
+      active: 4,
+    });
+    // Under 12 cells of purpose the least useful column goes, one at a time.
+    expect(columns(60, rows)).toEqual({
+      name: 18,
+      purpose: 20,
+      host: 0,
+      reach: 4,
+      status: 4,
+      active: 4,
+    });
+    expect(columns(38, rows)).toEqual({
+      name: 18,
+      purpose: 10,
+      host: 0,
+      reach: 4,
+      status: 0,
+      active: 0,
+    });
+    expect(columns(12, rows)).toEqual({
+      name: 4,
+      purpose: 0,
+      host: 0,
+      reach: 4,
+      status: 0,
+      active: 0,
+    });
 
     const { grid } = draw(stateWith(rows), 32, 3);
-    expect(grid.text(1).trimEnd()).toBe("  a-very-lon…  north-shell  up");
+    expect(grid.text(1).startsWith("  a-very-long-agent…")).toBe(true);
+    expect(grid.text(1).trimEnd().endsWith("up")).toBe(true);
     expect(grid.text(1).length).toBe(32);
     expect(styleAt(grid, 2, 1)).toBe("selected");
   });

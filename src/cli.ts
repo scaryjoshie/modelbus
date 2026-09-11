@@ -154,14 +154,15 @@ const commands: Record<string, Command> = {
       if (!r.agents.length) return console.log("nobody");
       console.log(
         table(
-          ["name", "host", "delivery", "status", "cwd", "last-seen"],
+          ["name", "purpose", "host", "delivery", "status", "active", "cwd"],
           r.agents.map((a) => [
             a.name,
+            (a.purpose ?? a.title ?? "").slice(0, 40),
             a.host,
             a.reachable ? (a.note ?? "reachable") : `no (${a.note ?? "?"})`,
             a.status ?? "",
+            a.activeAt === undefined ? "" : age(a.activeAt),
             shortCwd(a.cwd),
-            age(a.lastSeen),
           ]),
         ),
       );
@@ -255,12 +256,47 @@ const commands: Record<string, Command> = {
       console.log(r.items.length ? r.items.map(renderItem).join("\n") : "nothing");
     },
   },
-  register: {
-    usage: "register --name N                      join as any process; prints a token",
+  describe: {
+    usage:
+      "describe [<agent>|--as A|--token T] <text>   say what an agent is for (empty clears); oversight, or an agent about itself",
     async run(args) {
-      const { values } = parseArgs({ args, options: { name: { type: "string" } } });
-      if (!values.name) throw new Error("usage: modelbus register --name <name>");
-      const r = await rpc("register", { name: values.name });
+      const { values, positionals } = parseArgs({
+        args,
+        options: { as: { type: "string" }, token: { type: "string" } },
+        allowPositionals: true,
+      });
+      const self = Boolean(values.as || values.token);
+      const [agent, ...rest] = self ? [undefined, ...positionals] : positionals;
+      if (!self && !agent) throw new Error("usage: modelbus describe <agent> <text>");
+      const r = await rpc(
+        "describe",
+        { agent, purpose: rest.join(" ") },
+        self ? await identityFor(values) : undefined,
+      );
+      console.log(`${r.agent.name}: ${r.agent.purpose ?? "(no purpose)"}`);
+    },
+  },
+  status: {
+    usage: "status [--as A|--token T] <text>         say what this agent is doing (empty clears)",
+    async run(args) {
+      const { values, positionals } = parseArgs({
+        args,
+        options: { as: { type: "string" }, token: { type: "string" } },
+        allowPositionals: true,
+      });
+      await rpc("status", { text: positionals.join(" ") }, await identityFor(values));
+    },
+  },
+  register: {
+    usage: "register --name N [--purpose P]         join as any process; prints a token",
+    async run(args) {
+      const { values } = parseArgs({
+        args,
+        options: { name: { type: "string" }, purpose: { type: "string" } },
+      });
+      if (!values.name)
+        throw new Error("usage: modelbus register --name <name> [--purpose <text>]");
+      const r = await rpc("register", { name: values.name, purpose: values.purpose });
       console.error(`registered as "${r.agent.name}"; use --token or MODELBUS_TOKEN`);
       console.log(r.token);
     },

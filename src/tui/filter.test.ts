@@ -13,6 +13,7 @@ const agent = (name: string, host: string, extra: Partial<Agent> = {}): Agent =>
   name,
   host,
   lastSeen: 0,
+  purpose: null,
   reachable: true,
   ...extra,
 });

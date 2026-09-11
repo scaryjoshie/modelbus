@@ -16,7 +16,7 @@ export type Relationship = "top-level" | "subagent" | "unknown";
 export interface Observation {
   /** The host's own identifier for this session. Stable across host restarts if the host's is. */
   key: string;
-  /** Preferred display name; the core de-duplicates and follows it. */
+  /** A short handle, like `codex-4f2a`; the core de-duplicates and follows it. Titles go in `title`. */
   name: string;
   /** Only top-level sessions become agents. */
   relationship: Relationship;
@@ -26,9 +26,13 @@ export interface Observation {
   note?: string;
   pid?: number;
   cwd?: string;
+  /** What the host says the session is doing right now, in the host's own words. */
   status?: string;
+  /** The host's descriptive title for the session, distinct from its short name. */
   title?: string;
   startedAt?: number;
+  /** When the session last did anything, by the host's own record (a transcript write, an update). */
+  activeAt?: number;
 }
 
 /** What a process running inside a host session learns about itself. */

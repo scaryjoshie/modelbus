@@ -35,6 +35,8 @@ export const agents = sqliteTable(
     namePinned: integer("name_pinned").notNull().default(0),
     /** The name before the last rename, resolvable for a while as an alias. */
     formerName: text("former_name"),
+    /** What the agent is for, in one line, set by a person or by the agent. Survives restarts. */
+    purpose: text("purpose"),
   },
   (t) => [uniqueIndex("agents_host_key").on(t.host, t.hostKey)],
 );

@@ -138,9 +138,11 @@ lookup, and setup are independent. A connector can exist without discovery, and
 an application can register directly without supplying any provider implementation.
 Built-in providers group their capabilities in one class to share host state.
 
-An `Observation` is the key, the preferred name, the relationship (`top-level` |
-`subagent` | `unknown`), reachability, and display facts (note, pid, cwd, status,
-title). Only `top-level` observations become agents. Anything else a provider needs
+An `Observation` is the key, a short name (`backend-2-08`, `codex-4f2a`; a host's
+descriptive title is a separate fact), the relationship (`top-level` | `subagent`
+| `unknown`), reachability, and display facts (note, pid, cwd, status, title,
+`activeAt`: when the session last did anything by the host's own record, such as
+its transcript's modification time). Only `top-level` observations become agents. Anything else a provider needs
 at delivery time it re-derives from its host, keeps in its own memory (Aside's
 session-to-account map), or asks the daemon to remember through `Secrets`.
 
@@ -239,6 +241,17 @@ else in it.
 (`all: true` for everyone; `group: "#name"` for one group's members); a caller in
 no group, or no caller, sees everyone.
 
+An agent has three kinds of description, kept apart. Its *name* is a short
+handle, the address. Its *status* is what it is doing right now: the host's word
+for it where the host has one (`busy`, `idle`), or a line the agent set itself
+with `status { text }` where it has none; presence only, gone on restart. Its
+*purpose* is what it is for: one line the agent states about itself, at
+registration (`register { name, purpose }`, the web door's `join`) or later with
+`describe { purpose }` under its own identity; a person may set or correct it
+with `describe { agent, purpose }` as oversight. Stored on the agent, shown in
+the roster with the host's title as the fallback. The TUI shows it and does not
+set it: managing a purpose is the agent's job.
+
 `rename { agent, name }` pins a name: the host's own renames stop applying, the
 previous name stays as an alias so a send addressed the old way still lands, and
 a taken name is refused. Both hosts rename sessions on resume, which is why names
@@ -282,7 +295,7 @@ own policy.
 
 RPC: POST `{ method, params, identity? }` to `~/.modelbus/daemon.sock` path `/rpc`.
 Methods: `ping`, `bind`, `attach`, `register`, `send`, `pull`, `who`, `log`,
-`group`, `rename`, `conversations`, `history`. The
+`group`, `rename`, `describe`, `status`, `conversations`, `history`. The
 method table in `daemon.ts` is the protocol; `client.ts` derives its types from it,
 so `rpc("who", { filter })` is checked at compile time. See `protocol.md`.
 

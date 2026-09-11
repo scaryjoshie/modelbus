@@ -8,6 +8,7 @@ const agent = (name: string): Agent => ({
   name,
   host: "h",
   lastSeen: 0,
+  purpose: null,
   reachable: true,
 });
 

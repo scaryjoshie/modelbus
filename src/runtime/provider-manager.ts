@@ -26,6 +26,8 @@ export interface Presence {
   status?: string;
   title?: string;
   startedAt?: number;
+  /** When the agent last did anything: the host's record, or its last call to the daemon. */
+  activeAt?: number;
 }
 
 export interface RosterEntry extends Presence {
@@ -33,6 +35,8 @@ export interface RosterEntry extends Presence {
   name: string;
   host: string;
   lastSeen: number;
+  /** What the agent is for, if anyone said. */
+  purpose: string | null;
 }
 
 export class ProviderManager {
@@ -41,6 +45,8 @@ export class ProviderManager {
   private readonly present = new Map<string, Map<string, Presence>>();
   /** agent id -> last time it identified itself on the RPC. */
   private readonly contact = new Map<string, number>();
+  /** agent id -> a status the agent set for itself; shown when its host reports none. */
+  private readonly statuses = new Map<string, string>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight: Promise<void> | undefined;
   /** The first pass after start(); already settled if start() was never called. */
@@ -136,6 +142,12 @@ export class ProviderManager {
     this.store.touch(agentId);
   }
 
+  /** An agent says what it is doing; empty clears it. Presence only, so it is gone on restart. */
+  setStatus(agentId: string, text: string): void {
+    if (text.trim()) this.statuses.set(agentId, text.trim());
+    else this.statuses.delete(agentId);
+  }
+
   /** A session identifying itself (hook or shim). */
   identify(opts: { host: string; key: string; name: string }): Agent {
     const agent = this.store.bind(opts);
@@ -168,11 +180,12 @@ export class ProviderManager {
   }
 
   private presenceOf(agent: Agent): Presence | undefined {
+    const own = this.statuses.get(agent.id);
     const observed = this.present.get(agent.host)?.get(agent.id);
-    if (observed) return observed;
+    if (observed) return { ...observed, status: observed.status ?? own };
     const last = this.contact.get(agent.id);
     if (last !== undefined && Date.now() - last < CONTACT_TIMEOUT_MS) {
-      return { reachable: true, note: "by sync" };
+      return { reachable: true, note: "by sync", activeAt: last, status: own };
     }
     return undefined;
   }
@@ -182,13 +195,24 @@ export class ProviderManager {
     const entries: RosterEntry[] = [];
     for (const a of this.store.listAgents()) {
       const p = this.presenceOf(a);
-      if (p) entries.push({ id: a.id, name: a.name, host: a.host, lastSeen: a.lastSeen, ...p });
+      if (p) {
+        entries.push({
+          id: a.id,
+          name: a.name,
+          host: a.host,
+          lastSeen: a.lastSeen,
+          purpose: a.purpose,
+          ...p,
+        });
+      }
     }
     entries.sort((x, y) => Number(y.reachable) - Number(x.reachable) || y.lastSeen - x.lastSeen);
     if (!filter) return entries;
     const f = filter.toLowerCase();
     return entries.filter((e) =>
-      [e.name, e.host, e.cwd ?? "", e.title ?? ""].some((s) => s.toLowerCase().includes(f)),
+      [e.name, e.host, e.cwd ?? "", e.title ?? "", e.purpose ?? ""].some((s) =>
+        s.toLowerCase().includes(f),
+      ),
     );
   }
 }

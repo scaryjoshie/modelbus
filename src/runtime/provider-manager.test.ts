@@ -246,6 +246,27 @@ describe("provider manager", () => {
     store.close();
   });
 
+  test("an agent's own status shows when its host reports none; contact is its activity", () => {
+    const { host, t } = setup();
+    const lonely = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
+    t.setStatus(lonely.id, "  indexing the repo ");
+    const before = Date.now();
+    const entry = t.list().find((e) => e.id === lonely.id);
+    expect(entry?.status).toBe("indexing the repo");
+    expect(entry?.activeAt).toBeGreaterThanOrEqual(before - 1000);
+    t.setStatus(lonely.id, "");
+    expect(t.list().find((e) => e.id === lonely.id)?.status).toBeUndefined();
+    // a host's own status wins over the agent's
+    host.live = [obs("k1", "one", { status: "busy", activeAt: 42 })];
+    return t.reconcile().then(() => {
+      const one = t.list().find((e) => e.name === "one");
+      if (!one) throw new Error("agent missing");
+      t.setStatus(one.id, "mine");
+      expect(t.list().find((e) => e.name === "one")?.status).toBe("busy");
+      expect(t.list().find((e) => e.name === "one")?.activeAt).toBe(42);
+    });
+  });
+
   test("a failing provider keeps its last presence", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];

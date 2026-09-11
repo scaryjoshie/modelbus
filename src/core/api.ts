@@ -262,6 +262,14 @@ export class Api {
     return agent;
   }
 
+  /** One line saying what an agent is for; empty clears it. */
+  describe(agentId: string, purpose: string): Agent {
+    const line = purpose.trim().split("\n")[0] ?? "";
+    const agent = this.store.setPurpose(agentId, line === "" ? null : line);
+    if (!agent) throw new ApiError("unknown agent");
+    return agent;
+  }
+
   /** Every conversation, for a person looking at the chats. */
   conversations(): ConversationOverview[] {
     return this.store.conversationsOverview();

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "bc24be36-b7e0-458c-96bc-48c6e920d2f6",
+  "id": "1e7eba58-5aea-4627-868c-0863ee7f98e7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "agents": {
@@ -52,6 +52,13 @@
         },
         "former_name": {
           "name": "former_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "purpose": {
+          "name": "purpose",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
