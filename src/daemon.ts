@@ -18,19 +18,19 @@ import { fileSecrets } from "./runtime/secrets.ts";
  * derives its types from it.
  *
  * Identity on the wire:
- *   - { kind: "self", host, key, name }  a session identifying itself
+ *   - { kind: "self", provider, key, name }  a session identifying itself
  *   - { kind: "token", id, secret }      a self-registered process (id names, secret proves)
  */
 
 /** Bun's maximum. Must exceed the longest long-poll. */
 const IDLE_TIMEOUT_SECONDS = 255;
-/** The host of processes that joined via `register`; nobody observes them, they call in. */
-const REGISTERED_HOST = "registered";
+/** The provider of a process that registered on its own; nobody observes it, it calls in. */
+const UNSPECIFIED_PROVIDER = "unspecified";
 
 export const Identity = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("self"),
-    host: z.string().min(1),
+    provider: z.string().min(1),
     key: z.string().min(1),
     name: z.string().min(1),
   }),
@@ -116,7 +116,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       handler: (p) => {
         // Identity (a fresh non-secret key) and the proof (a secret) are distinct.
         const secret = randomBytes(24).toString("base64url");
-        let agent = store.bind({ host: REGISTERED_HOST, key: newId(), name: p.name });
+        let agent = store.bind({ provider: UNSPECIFIED_PROVIDER, key: newId(), name: p.name });
         store.setCredential(agent.id, secret);
         if (p.purpose) agent = api.describe(agent.id, p.purpose);
         providerManager.touch(agent.id);
@@ -264,7 +264,9 @@ export function createDaemon(
   const providerManager = new ProviderManager(
     store,
     opts.providers ??
-      allProviders({ secrets: (host) => fileSecrets(join(modelbusHome(), "secrets"), host) }),
+      allProviders({
+        secrets: (provider) => fileSecrets(join(modelbusHome(), "secrets"), provider),
+      }),
   );
   api.setDeliver((to, outbound, onRead) => providerManager.deliver(to, outbound, onRead));
   providerManager.onReachable = (agent, host) =>
@@ -276,8 +278,7 @@ export function createDaemon(
     if (!identity) throw new ApiError("identity required");
     if (identity.kind === "token") {
       const agent = store.agentById(identity.id);
-      if (!agent || agent.host !== REGISTERED_HOST)
-        throw new ApiError("unknown token; register first");
+      if (!agent) throw new ApiError("unknown token; register first");
       if (!store.verifyCredential(agent.id, identity.secret)) throw new ApiError("bad token");
       providerManager.touch(agent.id);
       return agent.id;

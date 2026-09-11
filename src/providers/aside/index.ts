@@ -23,7 +23,7 @@ const HANDLE_ID_CHARS = 4;
 const RECENT_MS = 7 * 24 * 3600 * 1000;
 
 export class AsideProvider implements Provider {
-  readonly host = "aside";
+  readonly name = "aside";
   readonly discovery = { observe: this.observe.bind(this) };
   readonly connector = {
     deliver: this.deliver.bind(this),

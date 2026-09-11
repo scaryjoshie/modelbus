@@ -4,10 +4,10 @@ import { type Agent, initialState, type State } from "../state.ts";
 import { clock } from "../text.ts";
 import { drawStatus } from "./status.ts";
 
-const agent = (name: string, host = "h"): Agent => ({
+const agent = (name: string, provider = "h"): Agent => ({
   id: name,
   name,
-  host,
+  provider,
   lastSeen: 0,
   purpose: null,
   reachable: true,

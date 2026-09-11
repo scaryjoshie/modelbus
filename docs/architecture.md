@@ -68,7 +68,7 @@ said. Presence is re-observed every few seconds and lives in the provider manage
 
 | Table | Row per | Columns |
 |---|---|---|
-| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's until pinned), `host` (which provider holds the line), `hostKey` (the host's own id, opaque to core, never a secret), `lastSeen`, `namePinned` (a person renamed it), `formerName` (alias after a rename) |
+| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's until pinned), `provider` (which provider holds the line; `unspecified` for a process with none), `key` (the provider's own id for it, opaque to core, never a secret), `lastSeen`, `namePinned` (a person renamed it), `formerName` (alias after a rename) |
 | `credentials` | registered agent | `secretHash` (sha-256 of its token secret), `createdAt`; the agent's auth secret, kept apart from its identity |
 | `conversations` | DM or group | `kind` (dm / group), `key` (`dm:<sorted ids>`, one per pair; `group:<name>`), `name` (groups only, unique) |
 | `participants` | conversation × agent | members; a group message goes to every member but the sender |
@@ -84,7 +84,7 @@ migration. The store applies pending migrations on open.
 ## 5. Identity
 
 - **Agent id**: ours, permanent, the only identifier in messages, logs, or `who`.
-- **(host, hostKey)**: how the agent is recognized again. The provider chooses the
+- **(provider, key)**: how the agent is recognized again. The provider chooses the
   key (Claude's session id, Codex's thread id, Aside's session id, or a minted
   non-secret id for a registered process). Same pair = same agent, across daemon
   restarts and host restarts that keep the host's identity (`--resume`,
@@ -98,12 +98,12 @@ Callers identify themselves on the RPC with one of:
 
 | kind | fields | resolved by |
 |---|---|---|
-| `self` | host, key, name | `providerManager.identify`: bind by (host, key), record contact |
-| `token` | id, secret | agent looked up by id (must be host `registered`); secret verified against its credential hash; record contact |
+| `self` | provider, key, name | `providerManager.identify`: bind by (provider, key), record contact |
+| `token` | id, secret | agent looked up by id; secret verified against its credential hash; record contact |
 
 `identity.ts` decides which to send from inside a process: explicit `--as` (a
-`self` identity on the pseudo-host `cli`, test only), then `MODELBUS_TOKEN`, then
-`MODELBUS_HOST/KEY/NAME` (for hosts that run one shim for many sessions), then each
+`self` identity on the pseudo-provider `cli`, test only), then `MODELBUS_TOKEN`, then
+`MODELBUS_PROVIDER/KEY/NAME` (for hosts that run one shim for many sessions), then each
 provider's `identifySelf()` (ancestor pids), then `MODELBUS_AS`.
 
 The MCP shim binds a client once; it adds identity to every request outside model
@@ -189,7 +189,7 @@ results with details. It does not register agents, call setup, or deliver messag
 
 Every 3 s, and on demand, the manager runs discovery and applies the POC's existing
 automatic binding policy: each top-level observation is bound to an agent by
-(host, key), with display facts kept in memory. Explicit session connection is a
+(provider, key), with display facts kept in memory. Explicit session connection is a
 documented direction, not yet a replacement for this policy. A throwing provider
 keeps its previous presence. An
 agent is live if its provider saw it on the last pass, or if it called in itself

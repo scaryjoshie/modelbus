@@ -8,7 +8,7 @@ import type { Observation, Provider } from "./provider.ts";
 import { ProviderManager } from "./provider-manager.ts";
 
 class FakeHost implements Provider {
-  readonly host = "fake";
+  readonly name = "fake";
   readonly discovery = { observe: async () => this.live };
   readonly connector = { deliver: this.deliver.bind(this) };
   live: Observation[] = [];
@@ -46,7 +46,7 @@ describe("provider manager", () => {
     const { store, host } = setup();
     host.live = [obs("k1", "one")];
     const provider: Provider = {
-      host: host.host,
+      name: host.name,
       discovery: host.discovery,
       configure: () => {
         throw new Error("discovery must not configure");
@@ -61,7 +61,7 @@ describe("provider manager", () => {
       },
     };
     expect(await discover([provider])).toEqual([
-      { host: "fake", status: "observed", observations: host.live },
+      { provider: "fake", status: "observed", observations: host.live },
     ]);
     expect(store.listAgents()).toEqual([]);
     store.close();
@@ -70,9 +70,9 @@ describe("provider manager", () => {
   test("a connector-only provider can receive without discovery", async () => {
     const store = new Store(":memory:");
     const host = new FakeHost();
-    const provider: Provider = { host: host.host, connector: host.connector };
+    const provider: Provider = { name: host.name, connector: host.connector };
     const manager = new ProviderManager(store, [provider]);
-    const agent = manager.identify({ host: host.host, key: "direct", name: "direct" });
+    const agent = manager.identify({ provider: host.name, key: "direct", name: "direct" });
     await manager.reconcile();
     expect(await discover([provider])).toEqual([]);
     expect(manager.list().map((a) => a.id)).toEqual([agent.id]);
@@ -86,18 +86,18 @@ describe("provider manager", () => {
   test("failed discovery is distinguishable from an empty observation", async () => {
     const results = await discover([
       {
-        host: "broken",
+        name: "broken",
         discovery: {
           observe: async () => {
             throw new Error("unavailable");
           },
         },
       },
-      { host: "empty", discovery: { observe: async () => [] } },
+      { name: "empty", discovery: { observe: async () => [] } },
     ]);
     expect(results).toEqual([
-      { host: "broken", status: "failed", detail: "unavailable" },
-      { host: "empty", status: "observed", observations: [] },
+      { provider: "broken", status: "failed", detail: "unavailable" },
+      { provider: "empty", status: "observed", observations: [] },
     ]);
   });
 
@@ -146,7 +146,7 @@ describe("provider manager", () => {
 
   test("an agent nobody observes is live while it calls in", async () => {
     const { t } = setup();
-    const a = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
+    const a = t.identify({ provider: "elsewhere", key: "x", name: "lonely" });
     expect(t.list().map((e) => `${e.name}:${e.note}`)).toEqual(["lonely:by sync"]);
     const result = await t.deliver(a, outbound(a, "hi"), () => undefined);
     expect(result.status).toBe("sent");
@@ -156,7 +156,7 @@ describe("provider manager", () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
-    const a = t.identify({ host: "fake", key: "k1", name: "one" });
+    const a = t.identify({ provider: "fake", key: "k1", name: "one" });
     expect(t.list()[0]?.id).toBe(a.id);
     expect(t.list()).toHaveLength(1);
   });
@@ -232,7 +232,7 @@ describe("provider manager", () => {
     const store = new Store(":memory:");
     const host = new FakeHost();
     const drops: Provider = {
-      host: "drops",
+      name: "drops",
       discovery: { observe: async () => [obs("k", "codexish")] },
       connector: { queueSurvivesRestart: false, deliver: host.deliver.bind(host) },
     };
@@ -248,7 +248,7 @@ describe("provider manager", () => {
 
   test("an agent's own status shows when its host reports none; contact is its activity", () => {
     const { host, t } = setup();
-    const lonely = t.identify({ host: "elsewhere", key: "x", name: "lonely" });
+    const lonely = t.identify({ provider: "elsewhere", key: "x", name: "lonely" });
     t.setStatus(lonely.id, "  indexing the repo ");
     const before = Date.now();
     const entry = t.list().find((e) => e.id === lonely.id);

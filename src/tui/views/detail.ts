@@ -2,7 +2,7 @@ import { agentMessages, conversationLabel, selectedAgent } from "../filter.ts";
 import { TITLE_ROWS } from "../layout.ts";
 import type { Grid, Rect } from "../screen.ts";
 import type { Agent, Message, State } from "../state.ts";
-import { hostStyle, hostStyleById, type Style } from "../style.ts";
+import { providerStyle, providerStyleById, type Style } from "../style.ts";
 import { age, clock, fit, fitRight, shortenHome } from "../text.ts";
 import { EMPTY } from "./empty.ts";
 import { type Line, nameStyle, putLine, SEPARATOR } from "./spans.ts";
@@ -77,9 +77,11 @@ function agentLines(state: State, agent: Agent, w: number): Line[] {
   ];
   if (agent.note) reachable.push({ text: `  ${agent.note}`, style: "plain" });
   const lines: Line[] = [
-    field("name", [{ text: agent.name, style: hostStyle(state.agents, agent.host) }]),
+    field("name", [{ text: agent.name, style: providerStyle(state.agents, agent.provider) }]),
     field("id", plain(agent.id)),
-    field("host", [{ text: agent.host, style: hostStyle(state.agents, agent.host) }]),
+    field("provider", [
+      { text: agent.provider, style: providerStyle(state.agents, agent.provider) },
+    ]),
     field("reachable", reachable),
     field("status", plain(agent.status ?? "")),
   ];
@@ -108,7 +110,7 @@ function headerLine(state: State, m: Message): Line {
   return [
     { text: fitRight(age(m.createdAt, state.now), AGE_COLS), style: "dim" },
     { text: " ", style: "plain" },
-    { text: m.fromName, style: hostStyleById(state.agents, m.fromAgentId) },
+    { text: m.fromName, style: providerStyleById(state.agents, m.fromAgentId) },
     { text: ARROW, style: "plain" },
     { text: m.toName, style: nameStyle(m.toName, state.agents, state.agents) },
     { text: " ", style: "plain" },

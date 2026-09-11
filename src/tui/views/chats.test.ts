@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Grid } from "../screen.ts";
 import { type Agent, type Conversation, initialState, type State } from "../state.ts";
-import { hostStyle, type Style } from "../style.ts";
+import { providerStyle, type Style } from "../style.ts";
 import { columns, drawChats } from "./chats.ts";
 import { EMPTY } from "./empty.ts";
 
@@ -9,10 +9,10 @@ const NOW = 100_000;
 
 const member = (name: string) => ({ id: `id-${name}`, name });
 
-const agent = (name: string, host: string): Agent => ({
+const agent = (name: string, provider: string): Agent => ({
   id: `id-${name}`,
   name,
-  host,
+  provider,
   lastSeen: NOW,
   purpose: null,
   reachable: true,
@@ -97,12 +97,12 @@ describe("drawChats", () => {
     const ops = g.text(1);
     expect(styleAt(g, 0, 1)).toBe("group");
     expect(styleAt(g, 0, 2)).toBe("dm");
-    expect(styleAt(g, ops.indexOf("ada"), 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, ops.indexOf("ada"), 1)).toBe(providerStyle(roster, "north-shell"));
     expect(styleAt(g, ops.indexOf(","), 1)).toBe("dim");
-    expect(styleAt(g, ops.indexOf("bo"), 1)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(g, ops.indexOf("bo"), 1)).toBe(providerStyle(roster, "zephyr"));
     expect(styleAt(g, ops.indexOf("3"), 1)).toBe("accent");
     expect(styleAt(g, g.text(2).indexOf("0"), 2)).toBe("dim");
-    expect(styleAt(g, ops.lastIndexOf("cy"), 1)).toBe(hostStyle(roster, "apex"));
+    expect(styleAt(g, ops.lastIndexOf("cy"), 1)).toBe(providerStyle(roster, "apex"));
     expect(styleAt(g, ops.indexOf(": ship"), 1)).toBe("plain");
     expect(styleAt(g, ops.indexOf("ship"), 1)).toBe("plain");
   });
@@ -124,7 +124,7 @@ describe("drawChats", () => {
     ];
     const g = draw(stateWith(rows, NONE), 60, 3);
     const row = g.text(1);
-    expect(styleAt(g, row.indexOf("ada"), 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, row.indexOf("ada"), 1)).toBe(providerStyle(roster, "north-shell"));
     expect(styleAt(g, row.indexOf("eve"), 1)).toBe("plain");
     expect(styleAt(g, row.indexOf("dee"), 1)).toBe("plain");
     // A member off the roster: known by id, but with no host to take a hue from.
@@ -181,11 +181,11 @@ describe("drawChats", () => {
     expect(row.endsWith("…")).toBe(true);
     expect(styleAt(g, 15, 1)).toBe("group");
     const cut = row.indexOf("agen…");
-    expect(styleAt(g, cut, 1)).toBe(hostStyle(roster, "zephyr"));
-    expect(styleAt(g, cut + 4, 1)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(g, cut, 1)).toBe(providerStyle(roster, "zephyr"));
+    expect(styleAt(g, cut + 4, 1)).toBe(providerStyle(roster, "zephyr"));
     expect(styleAt(g, cut - 2, 1)).toBe("dim");
     expect(styleAt(g, row.indexOf("agent-1"), 1)).toBe("plain");
-    expect(styleAt(g, row.indexOf("agent-0:"), 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, row.indexOf("agent-0:"), 1)).toBe(providerStyle(roster, "north-shell"));
   });
 
   test("wide characters in a body count as two cells", () => {

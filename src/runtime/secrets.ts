@@ -9,9 +9,9 @@ import type { Secrets } from "./provider.ts";
  * leaves a torn file. No encryption: programs running as the same user are trusted,
  * other accounts cannot read the directory. Nothing here touches core.
  */
-export function fileSecrets(dir: string, host: string): Secrets {
+export function fileSecrets(dir: string, provider: string): Secrets {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, `${host}.json`);
+  const path = join(dir, `${provider}.json`);
 
   const read = (): Record<string, string> => {
     let raw: string;

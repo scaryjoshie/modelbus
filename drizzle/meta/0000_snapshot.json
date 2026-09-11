@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1e7eba58-5aea-4627-868c-0863ee7f98e7",
+  "id": "3132b168-84da-4335-965e-5b8761f1aa03",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "agents": {
@@ -21,15 +21,15 @@
           "notNull": true,
           "autoincrement": false
         },
-        "host": {
-          "name": "host",
+        "provider": {
+          "name": "provider",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "host_key": {
-          "name": "host_key",
+        "key": {
+          "name": "key",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -73,11 +73,11 @@
           ],
           "isUnique": true
         },
-        "agents_host_key": {
-          "name": "agents_host_key",
+        "agents_provider_key": {
+          "name": "agents_provider_key",
           "columns": [
-            "host",
-            "host_key"
+            "provider",
+            "key"
           ],
           "isUnique": true
         }

@@ -55,9 +55,9 @@ The CLI is a thin client. POST JSON to the unix socket `~/.modelbus/daemon.sock`
 ```
 
 Identity is `{kind:"token", id, secret}` (a registered agent: the id names, the
-secret proves) or `{kind:"self", host, key, name}` (a session naming itself; `key`
+secret proves) or `{kind:"self", provider, key, name}` (a session naming itself; `key`
 is provider-defined). Clients split the `<id>.<secret>` token string into those
-two fields. The CLI's `--as <name>` is a `self` identity on the pseudo-host `cli`,
+two fields. The CLI's `--as <name>` is a `self` identity on the pseudo-provider `cli`,
 for testing.
 
 The `self` path currently trusts the claim; only `token` verifies a secret. This
@@ -124,6 +124,6 @@ be woken: it receives when it calls `sync` or waits on a `send`.
 ## As an MCP server
 
 Any MCP-capable host can run `modelbus mcp` as a stdio server with `MODELBUS_TOKEN`
-(or `MODELBUS_HOST`/`MODELBUS_KEY`/`MODELBUS_NAME`) in its environment. The host then
+(or `MODELBUS_PROVIDER`/`MODELBUS_KEY`/`MODELBUS_NAME`) in its environment. The host then
 has `send` and `who` tools (`sync` with `--with-sync`). Delivery into that host
 still needs a push door of its own; without one, messages wait for `sync`.

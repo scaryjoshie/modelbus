@@ -10,7 +10,7 @@ import { DEFAULT_LIMITS } from "./limits.ts";
 import { Store } from "./store.ts";
 
 const bindTest = (store: Store, key: string, name: string) =>
-  store.bind({ host: "test", key, name });
+  store.bind({ provider: "test", key, name });
 
 function fresh() {
   const store = new Store(":memory:");
@@ -339,9 +339,9 @@ describe("protocol", () => {
       expect(app.agent.name).toBe("app");
       expect(app.token.length).toBeGreaterThan(8);
       const who = await rpc("who", {}, undefined, unix);
-      expect(who.agents.map((a) => `${a.name}:${a.host}`).sort()).toEqual([
-        "app:registered",
-        "other:registered",
+      expect(who.agents.map((a) => `${a.name}:${a.provider}`).sort()).toEqual([
+        "app:unspecified",
+        "other:unspecified",
       ]);
 
       const appClient = createClient(parseToken(app.token), unix);
@@ -376,8 +376,8 @@ describe("protocol", () => {
     const unix = join(dir, "d.sock");
     const path = join(dir, "d.db");
     let d = createDaemon({ store: new Store(path), unix, providers: [], track: false });
-    const alice = { kind: "self", host: "cli", key: "a", name: "alice" } as const;
-    const bob = { kind: "self", host: "cli", key: "b", name: "bob" } as const;
+    const alice = { kind: "self", provider: "cli", key: "a", name: "alice" } as const;
+    const bob = { kind: "self", provider: "cli", key: "b", name: "bob" } as const;
     await rpc("bind", {}, bob, unix);
     const sent = await rpc("send", { to: "bob", body: "over the wire" }, alice, unix);
     expect(sent.deliveries[0]?.to.name).toBe("bob");
@@ -413,7 +413,7 @@ describe("protocol: groups over the wire", () => {
       track: false,
     });
     try {
-      const id = (name: string) => ({ kind: "self", host: "cli", key: name, name }) as const;
+      const id = (name: string) => ({ kind: "self", provider: "cli", key: name, name }) as const;
       for (const n of ["alice", "bob", "carol", "dave"]) await rpc("bind", {}, id(n), unix);
       const g = await rpc(
         "group",

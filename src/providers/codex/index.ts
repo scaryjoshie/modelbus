@@ -17,7 +17,7 @@ import { handle, isUserMessage, type Thread, threadMeta, threadsForPid } from ".
  */
 
 export class CodexProvider implements Provider {
-  readonly host = "codex";
+  readonly name = "codex";
   readonly discovery = { observe: this.observe.bind(this) };
   readonly connector = {
     /** Verified 2026-09-10: a queued message is gone after `codex resume`. */
@@ -70,7 +70,7 @@ export class CodexProvider implements Provider {
       const root = roots[0];
       if (roots.length !== 1 || !root) continue;
       return {
-        host: this.host,
+        provider: this.name,
         key: root.id,
         name: handle(root),
       };

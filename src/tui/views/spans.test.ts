@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Grid } from "../screen.ts";
-import { hostStyle } from "../style.ts";
+import { providerStyle } from "../style.ts";
 import { type Line, lineWidth, memberLine, nameStyle, putLine, truncateLine } from "./spans.ts";
 
 const line: Line = [
-  { text: "ada", style: "host0" },
+  { text: "ada", style: "provider0" },
   { text: ", ", style: "dim" },
-  { text: "bo", style: "host1" },
+  { text: "bo", style: "provider1" },
 ];
 
 describe("truncateLine", () => {
@@ -17,16 +17,16 @@ describe("truncateLine", () => {
 
   test("a cut line keeps whole spans and ends the cut one with an ellipsis in its style", () => {
     expect(truncateLine(line, 6)).toEqual([
-      { text: "ada", style: "host0" },
+      { text: "ada", style: "provider0" },
       { text: ", ", style: "dim" },
-      { text: "…", style: "host1" },
+      { text: "…", style: "provider1" },
     ]);
     expect(truncateLine(line, 4)).toEqual([
-      { text: "ada", style: "host0" },
+      { text: "ada", style: "provider0" },
       { text: "…", style: "dim" },
     ]);
-    expect(truncateLine(line, 2)).toEqual([{ text: "a…", style: "host0" }]);
-    expect(truncateLine(line, 1)).toEqual([{ text: "…", style: "host0" }]);
+    expect(truncateLine(line, 2)).toEqual([{ text: "a…", style: "provider0" }]);
+    expect(truncateLine(line, 1)).toEqual([{ text: "…", style: "provider0" }]);
     expect(truncateLine(line, 0)).toEqual([]);
   });
 
@@ -42,9 +42,9 @@ describe("putLine", () => {
     const g = new Grid(10, 1);
     expect(putLine(g, 1, 0, line, 9)).toBe(7);
     expect(g.text(0)).toBe(" ada, bo  ");
-    expect(g.cells[0]?.[1]?.style).toBe("host0");
+    expect(g.cells[0]?.[1]?.style).toBe("provider0");
     expect(g.cells[0]?.[4]?.style).toBe("dim");
-    expect(g.cells[0]?.[6]?.style).toBe("host1");
+    expect(g.cells[0]?.[6]?.style).toBe("provider1");
     expect(g.cells[0]?.[8]?.style).toBe("plain");
   });
 
@@ -63,23 +63,23 @@ describe("memberLine and nameStyle", () => {
     { id: "id-cy", name: "cy" },
   ];
   const roster = [
-    { id: "id-ada", host: "north-shell" },
-    { id: "id-bo", host: "zephyr" },
+    { id: "id-ada", provider: "north-shell" },
+    { id: "id-bo", provider: "zephyr" },
   ];
 
   test("names take their host's hue from the roster, plain off it, a dim comma between", () => {
     expect(memberLine(members, roster)).toEqual([
-      { text: "ada", style: hostStyle(roster, "north-shell") },
+      { text: "ada", style: providerStyle(roster, "north-shell") },
       { text: ", ", style: "dim" },
-      { text: "bo", style: hostStyle(roster, "zephyr") },
+      { text: "bo", style: providerStyle(roster, "zephyr") },
       { text: ", ", style: "dim" },
       { text: "cy", style: "plain" },
     ]);
     expect(memberLine([], roster)).toEqual([]);
   });
 
-  test("a name without an id resolves through the known agents to a host, or stays plain", () => {
-    expect(nameStyle("bo", members, roster)).toBe(hostStyle(roster, "zephyr"));
+  test("a name without an id resolves through the known agents to a provider, or stays plain", () => {
+    expect(nameStyle("bo", members, roster)).toBe(providerStyle(roster, "zephyr"));
     expect(nameStyle("cy", members, roster)).toBe("plain");
     expect(nameStyle("dee", members, roster)).toBe("plain");
   });

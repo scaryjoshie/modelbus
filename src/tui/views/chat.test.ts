@@ -8,7 +8,7 @@ import {
   initialState,
   type State,
 } from "../state.ts";
-import { hostStyle, type Style } from "../style.ts";
+import { providerStyle, type Style } from "../style.ts";
 import { clock } from "../text.ts";
 import { chatLines, drawChat, messageLines } from "./chat.ts";
 import { EMPTY } from "./empty.ts";
@@ -21,7 +21,7 @@ const message = (seq: number, extra: Partial<ChatMessage> = {}): ChatMessage => 
   conversationId: "c1",
   fromAgentId: "id-ada",
   fromName: "ada",
-  fromHost: "north-shell",
+  fromProvider: "north-shell",
   body: `message ${seq}`,
   createdAt: NOW - (10 - seq) * 1000,
   ...extra,
@@ -40,10 +40,10 @@ const conversation: Conversation = {
   unread: 0,
 };
 
-const agent = (name: string, host: string): Agent => ({
+const agent = (name: string, provider: string): Agent => ({
   id: `id-${name}`,
   name,
-  host,
+  provider,
   lastSeen: NOW,
   purpose: null,
   reachable: true,
@@ -95,14 +95,18 @@ describe("messageLines", () => {
       `ada  ${t(2)}`,
       "  five",
     ]);
-    expect(lines[0]?.[0]?.style).toBe(hostStyle(roster, "north-shell"));
+    expect(lines[0]?.[0]?.style).toBe(providerStyle(roster, "north-shell"));
     expect(lines[0]?.[1]?.style).toBe("dim");
     expect(lines[1]?.[0]?.style).toBe("plain");
   });
 
   test("a sender is colored by the host on the message, not the roster", () => {
-    const lines = messageLines([message(1, { fromAgentId: "id-x", fromHost: "apex" })], roster, 20);
-    expect(lines[0]?.[0]?.style).toBe(hostStyle(roster, "apex"));
+    const lines = messageLines(
+      [message(1, { fromAgentId: "id-x", fromProvider: "apex" })],
+      roster,
+      20,
+    );
+    expect(lines[0]?.[0]?.style).toBe(providerStyle(roster, "apex"));
   });
 
   test("a long word and wide characters break by cell width", () => {
@@ -141,9 +145,9 @@ describe("drawChat", () => {
     const g = draw(stateWith(page([message(1)])), 40, 6);
     expect(g.text(0).trimEnd()).toBe("#ops  ada, bo");
     expect(styleAt(g, 0, 0)).toBe("group");
-    expect(styleAt(g, 6, 0)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, 6, 0)).toBe(providerStyle(roster, "north-shell"));
     expect(styleAt(g, 9, 0)).toBe("dim");
-    expect(styleAt(g, 11, 0)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(g, 11, 0)).toBe(providerStyle(roster, "zephyr"));
     const unknown = draw(stateWith(page([message(1)]), { agents: [] }), 40, 6);
     expect(styleAt(unknown, 6, 0)).toBe("plain");
     expect(styleAt(unknown, 0, 0)).toBe("group");
@@ -162,7 +166,7 @@ describe("drawChat", () => {
     const focused = draw(stateWith(page([message(1)]), { focus: "messages" }), 40, 6);
     expect(focused.text(0).trimEnd()).toBe("#ops  ada, bo");
     expect(new Set(styles(focused, 0).slice(0, 13))).toEqual(new Set(["title"]));
-    expect(styleAt(focused, 0, 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(focused, 0, 1)).toBe(providerStyle(roster, "north-shell"));
     const list = draw(stateWith(page([message(1)]), { focus: "list" }), 40, 6);
     expect(styles(list, 0)).not.toContain("title");
   });
@@ -200,12 +204,12 @@ describe("drawChat", () => {
   });
 
   test("senders take their host's hue, times are dim, bodies plain; no row is inverse", () => {
-    const bo = message(2, { fromAgentId: "id-bo", fromName: "bo", fromHost: "zephyr" });
+    const bo = message(2, { fromAgentId: "id-bo", fromName: "bo", fromProvider: "zephyr" });
     const g = draw(stateWith(page([message(1), bo])), 40, 8);
-    expect(styleAt(g, 0, 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, 0, 1)).toBe(providerStyle(roster, "north-shell"));
     expect(styleAt(g, 5, 1)).toBe("dim");
     expect(styleAt(g, 2, 2)).toBe("plain");
-    expect(styleAt(g, 0, 4)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(g, 0, 4)).toBe(providerStyle(roster, "zephyr"));
     for (let y = 0; y < g.rows; y++) expect(styles(g, y)).not.toContain("selected");
   });
 
@@ -216,12 +220,12 @@ describe("drawChat", () => {
 
   test("a long header is cut with an ellipsis at the pane edge", () => {
     const g = draw(
-      stateWith(page([message(1, { fromName: "a-very-long-name", fromHost: "apex" })])),
+      stateWith(page([message(1, { fromName: "a-very-long-name", fromProvider: "apex" })])),
       12,
       4,
     );
     expect(g.text(1)).toBe("a-very-long…");
-    expect(styleAt(g, 11, 1)).toBe(hostStyle(roster, "apex"));
+    expect(styleAt(g, 11, 1)).toBe(providerStyle(roster, "apex"));
     expect(g.text(0)).toBe("#ops  ada, …");
   });
 

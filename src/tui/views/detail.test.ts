@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Grid, type Rect } from "../screen.ts";
 import { type Agent, type Conversation, initialState, type Message, type State } from "../state.ts";
-import { hostStyle } from "../style.ts";
+import { providerStyle } from "../style.ts";
 import { clock } from "../text.ts";
 import { detailLines, drawDetail } from "./detail.ts";
 import { EMPTY } from "./empty.ts";
@@ -11,7 +11,7 @@ const NOW = 100_000;
 const agent = (id: string, extra: Partial<Agent> = {}): Agent => ({
   id,
   name: id,
-  host: "north-shell",
+  provider: "north-shell",
   activeAt: NOW - 5000,
   lastSeen: NOW - 5000,
   purpose: null,
@@ -44,7 +44,11 @@ const group = (name: string, members: string[]): Conversation => ({
   unread: 0,
 });
 
-const roster = [agent("ada"), agent("bo", { host: "zephyr" }), agent("cy", { host: "apex" })];
+const roster = [
+  agent("ada"),
+  agent("bo", { provider: "zephyr" }),
+  agent("cy", { provider: "apex" }),
+];
 
 const state = (extra: Partial<State> = {}): State => ({
   ...initialState({ cols: 120, rows: 20 }, NOW),
@@ -75,7 +79,7 @@ describe("drawDetail in the agents view", () => {
     expect(rows(g, 1, 11)).toEqual([
       "name      ada",
       "id        ada",
-      "host      north-shell",
+      "provider  north-shell",
       "reachable yes",
       "status    working",
       "title     fix tests",
@@ -94,13 +98,13 @@ describe("drawDetail in the agents view", () => {
 
   test("the name and the host tag share the host's hue; the clock is dim", () => {
     const g = draw(state({ selectedAgentId: "ada" }));
-    expect(styleAt(g, 10, 1)).toBe(hostStyle(roster, "north-shell"));
-    expect(styleAt(g, 12, 1)).toBe(hostStyle(roster, "north-shell"));
-    expect(styleAt(g, 10, 3)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, 10, 1)).toBe(providerStyle(roster, "north-shell"));
+    expect(styleAt(g, 12, 1)).toBe(providerStyle(roster, "north-shell"));
+    expect(styleAt(g, 10, 3)).toBe(providerStyle(roster, "north-shell"));
     expect(styleAt(g, 10, 2)).toBe("plain");
     const bo = draw(state({ selectedAgentId: "bo" }));
-    expect(styleAt(bo, 10, 1)).toBe(hostStyle(roster, "zephyr"));
-    expect(styleAt(bo, 10, 3)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(bo, 10, 1)).toBe(providerStyle(roster, "zephyr"));
+    expect(styleAt(bo, 10, 3)).toBe(providerStyle(roster, "zephyr"));
     // No purpose or title, so "active" is the seventh field.
     const seen = g.text(7);
     expect(seen).toMatch(/^active {4}5s ago/);
@@ -164,8 +168,8 @@ describe("drawDetail in the agents view", () => {
     const g = draw(s);
     const header = g.text(9);
     expect(header.trimEnd()).toMatch(/ada → bo delivered$/);
-    expect(styleAt(g, header.indexOf("ada"), 9)).toBe(hostStyle(roster, "north-shell"));
-    expect(styleAt(g, header.indexOf("bo"), 9)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(g, header.indexOf("ada"), 9)).toBe(providerStyle(roster, "north-shell"));
+    expect(styleAt(g, header.indexOf("bo"), 9)).toBe(providerStyle(roster, "zephyr"));
     expect(styleAt(g, header.indexOf("→"), 9)).toBe("plain");
     const gone = draw(
       state({ agents: [agent("ada")], selectedAgentId: "ada", messages: s.messages }),
@@ -243,7 +247,7 @@ describe("drawDetail in the agents view", () => {
     drawDetail(s, r, g);
     expect(g.text(2).slice(0, 3)).toBe("   ");
     expect(g.text(2)).toContain("detail");
-    expect(g.text(5)).toMatch(/^ {3}host/);
+    expect(g.text(5)).toMatch(/^ {3}provider/);
     expect(g.text(6).trim()).toBe("");
     expect(g.text(1).trim()).toBe("");
   });

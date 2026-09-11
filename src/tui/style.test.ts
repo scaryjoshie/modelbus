@@ -1,43 +1,50 @@
 import { describe, expect, test } from "bun:test";
 import {
   detectDepth,
-  HOST_HUES,
-  type HostStyle,
-  hostStyle,
-  hostStyleById,
+  PROVIDER_HUES,
+  type ProviderStyle,
+  providerStyle,
+  providerStyleById,
   type Style,
   sgr,
 } from "./style.ts";
 
 const ROLES: Style[] = ["ok", "bad", "wait", "group", "dm", "accent"];
-const HOSTS: HostStyle[] = ["host0", "host1", "host2", "host3", "host4", "host5"];
+const HOSTS: ProviderStyle[] = [
+  "provider0",
+  "provider1",
+  "provider2",
+  "provider3",
+  "provider4",
+  "provider5",
+];
 const ROSTER = [
-  { id: "a1", host: "zephyr" },
-  { id: "a2", host: "apex" },
-  { id: "a3", host: "north-shell" },
-  { id: "a4", host: "apex" },
+  { id: "a1", provider: "zephyr" },
+  { id: "a2", provider: "apex" },
+  { id: "a3", provider: "north-shell" },
+  { id: "a4", provider: "apex" },
 ];
 
-describe("hostStyle", () => {
+describe("providerStyle", () => {
   test("each host on the roster gets its own hue, in sorted order, stably", () => {
-    expect(hostStyle(ROSTER, "apex")).toBe("host0");
-    expect(hostStyle(ROSTER, "north-shell")).toBe("host1");
-    expect(hostStyle(ROSTER, "zephyr")).toBe("host2");
-    expect(hostStyle(ROSTER, "zephyr")).toBe(hostStyle([...ROSTER].reverse(), "zephyr"));
+    expect(providerStyle(ROSTER, "apex")).toBe("provider0");
+    expect(providerStyle(ROSTER, "north-shell")).toBe("provider1");
+    expect(providerStyle(ROSTER, "zephyr")).toBe("provider2");
+    expect(providerStyle(ROSTER, "zephyr")).toBe(providerStyle([...ROSTER].reverse(), "zephyr"));
   });
 
   test("a host absent from the roster takes the next hue; many hosts wrap", () => {
-    expect(hostStyle(ROSTER, "elsewhere")).toBe("host3");
-    const many = Array.from({ length: 8 }, (_, i) => ({ host: `h${i}` }));
-    expect(hostStyle(many, "h6")).toBe("host0");
-    expect(hostStyle([], "any")).toBe("host0");
-    for (const h of ["apex", "elsewhere"]) expect(HOSTS).toContain(hostStyle(ROSTER, h));
+    expect(providerStyle(ROSTER, "elsewhere")).toBe("provider3");
+    const many = Array.from({ length: 8 }, (_, i) => ({ provider: `h${i}` }));
+    expect(providerStyle(many, "h6")).toBe("provider0");
+    expect(providerStyle([], "any")).toBe("provider0");
+    for (const h of ["apex", "elsewhere"]) expect(HOSTS).toContain(providerStyle(ROSTER, h));
   });
 
-  test("by id: the roster's host, or plain for a stranger", () => {
-    expect(hostStyleById(ROSTER, "a1")).toBe(hostStyle(ROSTER, "zephyr"));
-    expect(hostStyleById(ROSTER, "a4")).toBe(hostStyle(ROSTER, "apex"));
-    expect(hostStyleById(ROSTER, "gone")).toBe("plain");
+  test("by id: the roster's provider, or plain for a stranger", () => {
+    expect(providerStyleById(ROSTER, "a1")).toBe(providerStyle(ROSTER, "zephyr"));
+    expect(providerStyleById(ROSTER, "a4")).toBe(providerStyle(ROSTER, "apex"));
+    expect(providerStyleById(ROSTER, "gone")).toBe("plain");
   });
 });
 

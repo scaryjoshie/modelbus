@@ -20,14 +20,14 @@ function matches(filter: string, fields: Array<string | undefined>): boolean {
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 const byHostThenName = (a: Agent, b: Agent): number =>
-  compare(a.host, b.host) || compare(a.name, b.name);
+  compare(a.provider, b.provider) || compare(a.name, b.name);
 
 const bySeq = (a: Message, b: Message): number => a.seq - b.seq;
 
 /** The roster as the agents tab lists it. */
 export function visibleAgents(state: State): Agent[] {
   return state.agents
-    .filter((a) => matches(state.filter, [a.name, a.host, a.cwd, a.status, a.title]))
+    .filter((a) => matches(state.filter, [a.name, a.provider, a.cwd, a.status, a.title]))
     .sort(byHostThenName);
 }
 

@@ -1,5 +1,5 @@
 import type { Grid } from "../screen.ts";
-import { hostStyleById, type Style } from "../style.ts";
+import { providerStyleById, type Style } from "../style.ts";
 import { width } from "../text.ts";
 
 /**
@@ -78,15 +78,15 @@ export interface Participant {
   name: string;
 }
 
-/** What `hostStyleById` needs of the roster; views pass `state.agents`. */
-export type Roster = ReadonlyArray<{ id: string; host: string }>;
+/** What `providerStyleById` needs of the roster; views pass `state.agents`. */
+export type Roster = ReadonlyArray<{ id: string; provider: string }>;
 
 /** Every member's name in its host's hue, a dim comma between them. */
 export function memberLine(participants: Participant[], agents: Roster): Line {
   return participants.flatMap(
     (p, i): Line => [
       ...(i > 0 ? [{ text: SEPARATOR, style: "dim" as const }] : []),
-      { text: p.name, style: hostStyleById(agents, p.id) },
+      { text: p.name, style: providerStyleById(agents, p.id) },
     ],
   );
 }
@@ -99,5 +99,5 @@ export function memberLine(participants: Participant[], agents: Roster): Line {
  */
 export function nameStyle(name: string, known: Participant[], agents: Roster): Style {
   const p = known.find((m) => m.name === name);
-  return p ? hostStyleById(agents, p.id) : "plain";
+  return p ? providerStyleById(agents, p.id) : "plain";
 }

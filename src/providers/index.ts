@@ -8,6 +8,6 @@ import { CodexProvider } from "./codex/index.ts";
  * `secrets` so providers can remember across restarts; clients that only need
  * setup plans or self-identification pass nothing.
  */
-export function allProviders(deps: { secrets?: (host: string) => Secrets } = {}): Provider[] {
+export function allProviders(deps: { secrets?: (provider: string) => Secrets } = {}): Provider[] {
   return [new ClaudeCodeProvider(deps.secrets), new CodexProvider(), new AsideProvider()];
 }

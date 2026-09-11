@@ -6,7 +6,7 @@ import { drawTabs, tabCount } from "./tabs.ts";
 const agent = (name: string): Agent => ({
   id: `id-${name}`,
   name,
-  host: "h",
+  provider: "h",
   lastSeen: 0,
   purpose: null,
   reachable: true,

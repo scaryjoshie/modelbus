@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { Grid, type Rect } from "../screen.ts";
 import { type Agent, initialState, type State } from "../state.ts";
-import { hostStyle, type Style } from "../style.ts";
+import { providerStyle, type Style } from "../style.ts";
 import { columns, drawAgents, PENDING_MARK } from "./agents.ts";
 
 const MINUTE_MS = 60_000;
 const NOW = 100 * MINUTE_MS;
 
-const agent = (name: string, host: string, extra: Partial<Agent> = {}): Agent => ({
+const agent = (name: string, provider: string, extra: Partial<Agent> = {}): Agent => ({
   id: `id-${name}`,
   name,
-  host,
+  provider,
   cwd: `/home/someone/work/${name}`,
   lastSeen: NOW - 5 * MINUTE_MS,
   activeAt: NOW - 5 * MINUTE_MS,
@@ -72,14 +72,14 @@ describe("drawAgents", () => {
     for (const y of [2, 3, 4]) expect(grid.text(y).length).toBe(62);
   });
 
-  test("a name and its host tag share the host's hue; the hue comes from the host, not the id", () => {
+  test("a name and its host tag share the host's hue; the hue comes from the provider, not the id", () => {
     const { grid } = draw(stateWith(roster, { selectedAgentId: undefined }), 60, 6);
-    expect(styleOf(grid, "writer", 1)).toBe(hostStyle(roster, "apex"));
-    expect(styleOf(grid, "apex", 1)).toBe(hostStyle(roster, "apex"));
-    expect(styleOf(grid, "planner", 2)).toBe(hostStyle(roster, "north-shell"));
-    expect(styleOf(grid, "north-shell", 2)).toBe(hostStyle(roster, "north-shell"));
-    expect(styleOf(grid, "tester", 3)).toBe(hostStyle(roster, "zephyr"));
-    expect(styleOf(grid, "zephyr", 3)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleOf(grid, "writer", 1)).toBe(providerStyle(roster, "apex"));
+    expect(styleOf(grid, "apex", 1)).toBe(providerStyle(roster, "apex"));
+    expect(styleOf(grid, "planner", 2)).toBe(providerStyle(roster, "north-shell"));
+    expect(styleOf(grid, "north-shell", 2)).toBe(providerStyle(roster, "north-shell"));
+    expect(styleOf(grid, "tester", 3)).toBe(providerStyle(roster, "zephyr"));
+    expect(styleOf(grid, "zephyr", 3)).toBe(providerStyle(roster, "zephyr"));
     expect(styleOf(grid, "idle", 2)).toBe("plain");
   });
 
@@ -176,13 +176,13 @@ describe("drawAgents", () => {
     expect(top.text(1).indexOf("h ")).toBe(scrolled.text(1).indexOf("h "));
   });
 
-  test("names are capped, the purpose takes the slack, and narrow panes drop host, active, status", () => {
+  test("names are capped, the purpose takes the slack, and narrow panes drop provider, active, status", () => {
     const rows = [agent("a-very-long-agent-name-indeed", "north-shell", { status: "idle" })];
     // Mark 2; name capped at 18 (+2); host 11, reach 4, status 4, active 4, each +2: 53 in all.
     expect(columns(80, rows)).toEqual({
       name: 18,
       purpose: 27,
-      host: 11,
+      provider: 11,
       reach: 4,
       status: 4,
       active: 4,
@@ -191,7 +191,7 @@ describe("drawAgents", () => {
     expect(columns(60, rows)).toEqual({
       name: 18,
       purpose: 20,
-      host: 0,
+      provider: 0,
       reach: 4,
       status: 4,
       active: 4,
@@ -199,7 +199,7 @@ describe("drawAgents", () => {
     expect(columns(38, rows)).toEqual({
       name: 18,
       purpose: 10,
-      host: 0,
+      provider: 0,
       reach: 4,
       status: 0,
       active: 0,
@@ -207,7 +207,7 @@ describe("drawAgents", () => {
     expect(columns(12, rows)).toEqual({
       name: 4,
       purpose: 0,
-      host: 0,
+      provider: 0,
       reach: 4,
       status: 0,
       active: 0,

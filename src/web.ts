@@ -58,7 +58,9 @@ function buildServer(): McpServer {
     async ({ filter }) => {
       try {
         const r = await rpc("who", { filter });
-        const lines = r.agents.map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
+        const lines = r.agents.map((a) =>
+          [a.name, a.provider, a.cwd ?? ""].filter(Boolean).join("  "),
+        );
         return text(lines.length ? lines.join("\n") : "nobody is on the bus");
       } catch (e) {
         return text(e instanceof Error ? e.message : String(e), true);

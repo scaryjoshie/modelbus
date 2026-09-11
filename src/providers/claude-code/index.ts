@@ -31,7 +31,7 @@ import { currentSession, liveSessions } from "./registry.ts";
  */
 
 export class ClaudeCodeProvider implements Provider {
-  readonly host = "claude-code";
+  readonly name = "claude-code";
   readonly discovery = { observe: this.observe.bind(this) };
   readonly connector = {
     /** Verified 2026-09-10: a queued message survives `--resume`. */
@@ -43,7 +43,7 @@ export class ClaudeCodeProvider implements Provider {
   private readonly secrets: Secrets | undefined;
 
   constructor(secretsFor?: (host: string) => Secrets) {
-    this.secrets = secretsFor?.(this.host);
+    this.secrets = secretsFor?.(this.name);
   }
 
   private async observe(): Promise<Observation[]> {
@@ -70,7 +70,7 @@ export class ClaudeCodeProvider implements Provider {
     if (!s) return null;
     const token = process.env.CLAUDE_CODE_MESSAGING_TOKEN;
     return {
-      host: this.host,
+      provider: this.name,
       key: s.sessionId,
       name: s.name,
       attach: token ? { token } : undefined,

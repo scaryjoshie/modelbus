@@ -33,7 +33,7 @@ export type Message = MessageRow;
 
 export interface InboxItem extends Message {
   fromName: string;
-  fromHost: string;
+  fromProvider: string;
 }
 
 /** One conversation as a person sees the list of chats. */
@@ -92,11 +92,11 @@ export class Store {
     return this.db.select().from(agents).where(eq(agents.id, id)).get();
   }
 
-  agentByHostKey(host: string, hostKey: string): Agent | undefined {
+  agentByKey(provider: string, key: string): Agent | undefined {
     return this.db
       .select()
       .from(agents)
-      .where(and(eq(agents.host, host), eq(agents.hostKey, hostKey)))
+      .where(and(eq(agents.provider, provider), eq(agents.key, key)))
       .get();
   }
 
@@ -113,9 +113,9 @@ export class Store {
    * Find the agent behind (host, key) or create one. The display name follows the
    * host's whenever that name is free.
    */
-  bind(opts: { host: string; key: string; name: string }): Agent {
+  bind(opts: { provider: string; key: string; name: string }): Agent {
     const now = Date.now();
-    const existing = this.agentByHostKey(opts.host, opts.key);
+    const existing = this.agentByKey(opts.provider, opts.key);
     if (existing) {
       // A pinned name is a person's choice; the host's renames no longer apply.
       const name =
@@ -130,8 +130,8 @@ export class Store {
     const agent: Agent = {
       id: newId(),
       name: this.freeName(opts.name),
-      host: opts.host,
-      hostKey: opts.key,
+      provider: opts.provider,
+      key: opts.key,
       lastSeen: now,
       namePinned: 0,
       formerName: null,
@@ -321,7 +321,7 @@ export class Store {
         body: messages.body,
         createdAt: messages.createdAt,
         fromName: agents.name,
-        fromHost: agents.host,
+        fromProvider: agents.provider,
       })
       .from(messages)
       .innerJoin(agents, eq(agents.id, messages.fromAgentId))
@@ -398,7 +398,7 @@ export class Store {
         body: messages.body,
         createdAt: messages.createdAt,
         fromName: agents.name,
-        fromHost: agents.host,
+        fromProvider: agents.provider,
       })
       .from(deliveries)
       .innerJoin(messages, eq(messages.id, deliveries.messageId))

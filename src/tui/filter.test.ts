@@ -8,10 +8,10 @@ import {
 } from "./filter.ts";
 import { type Agent, type Conversation, initialState, type Message, type State } from "./state.ts";
 
-const agent = (name: string, host: string, extra: Partial<Agent> = {}): Agent => ({
+const agent = (name: string, provider: string, extra: Partial<Agent> = {}): Agent => ({
   id: `id-${name}`,
   name,
-  host,
+  provider,
   lastSeen: 0,
   purpose: null,
   reachable: true,
@@ -81,7 +81,7 @@ describe("visibleAgents", () => {
     expect(names(state.agents)).toEqual(["b", "a"]);
   });
 
-  test("filters by substring, ignoring case, on name, host, cwd, status and title", () => {
+  test("filters by substring, ignoring case, on name, provider, cwd, status and title", () => {
     const rows = [
       agent("planner", "north-shell", { cwd: "~/work/app", status: "idle", title: "Refactor" }),
       agent("tester", "zephyr", { cwd: "~/work/lib", status: "busy" }),

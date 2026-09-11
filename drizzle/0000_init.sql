@@ -1,8 +1,8 @@
 CREATE TABLE `agents` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
-	`host` text NOT NULL,
-	`host_key` text NOT NULL,
+	`provider` text NOT NULL,
+	`key` text NOT NULL,
 	`last_seen` integer NOT NULL,
 	`name_pinned` integer DEFAULT 0 NOT NULL,
 	`former_name` text,
@@ -10,7 +10,7 @@ CREATE TABLE `agents` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `agents_name_unique` ON `agents` (`name`);--> statement-breakpoint
-CREATE UNIQUE INDEX `agents_host_key` ON `agents` (`host`,`host_key`);--> statement-breakpoint
+CREATE UNIQUE INDEX `agents_provider_key` ON `agents` (`provider`,`key`);--> statement-breakpoint
 CREATE TABLE `conversations` (
 	`id` text PRIMARY KEY NOT NULL,
 	`kind` text NOT NULL,

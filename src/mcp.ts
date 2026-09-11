@@ -84,7 +84,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
         const r = await client.request("who", { filter });
         const lines = r.agents
           .filter((a) => a.name !== self && (filter || a.reachable))
-          .map((a) => [a.name, a.host, a.cwd ?? ""].filter(Boolean).join("  "));
+          .map((a) => [a.name, a.provider, a.cwd ?? ""].filter(Boolean).join("  "));
         return text(lines.length ? lines.join("\n") : "nobody else is on the bus");
       } catch (e) {
         return text(e instanceof Error ? e.message : String(e), true);

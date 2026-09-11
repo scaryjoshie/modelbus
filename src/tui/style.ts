@@ -8,7 +8,7 @@
  *   group     a group's #name, wherever it appears
  *   dm        the "dm" label of a pair, wherever it appears
  *   accent    pending marks and their count; a non-zero unread count
- *   hostN     an agent's name and its host tag: one hue per host, by `hostStyle`
+ *   hostN     an agent's name and its host tag: one hue per provider, by `providerStyle`
  *   selected  the cursor row: inverse, never a color
  *   title     the active tab, the pane that has the arrows: bold
  *   dim       secondary fields: ages, times, inactive tabs, zero counts, labels
@@ -25,38 +25,48 @@ export type Style =
   | "group"
   | "dm"
   | "accent"
-  | HostStyle;
+  | ProviderStyle;
 
-/** How many hues hosts cycle through; the known hosts each get their own. */
-export const HOST_HUES = 6;
+/** How many hues providers cycle through. */
+export const PROVIDER_HUES = 6;
 
-export type HostStyle = `host${0 | 1 | 2 | 3 | 4 | 5}`;
+export type ProviderStyle = `provider${0 | 1 | 2 | 3 | 4 | 5}`;
 
-const HOST_STYLES: readonly HostStyle[] = ["host0", "host1", "host2", "host3", "host4", "host5"];
+const PROVIDER_STYLES: readonly ProviderStyle[] = [
+  "provider0",
+  "provider1",
+  "provider2",
+  "provider3",
+  "provider4",
+  "provider5",
+];
 
 /**
- * The hue for a host: the distinct hosts on the roster, sorted, take the hues in
- * order, so up to six hosts are all distinct and the same host is the same hue
- * everywhere. No host is named here (only providers name hosts); the host tag
- * drawn beside each name is the legend. A host absent from the roster, such as
- * the sender of an old message, takes the hue after the last.
+ * The hue for a provider: the distinct providers on the roster, sorted, take the
+ * hues in order, so up to six are all distinct and the same provider is the same
+ * hue everywhere. None is named here (only provider code names its host); the
+ * provider tag drawn beside each name is the legend. A provider absent from the
+ * roster, such as the sender of an old message, takes the hue after the last.
  */
-export function hostStyle(roster: ReadonlyArray<{ host: string }>, host: string): HostStyle {
-  const hosts = [...new Set(roster.map((a) => a.host))].sort();
-  const index = hosts.indexOf(host);
-  return HOST_STYLES[(index >= 0 ? index : hosts.length) % HOST_HUES] ?? "host0";
+export function providerStyle(
+  roster: ReadonlyArray<{ provider: string }>,
+  provider: string,
+): ProviderStyle {
+  const hosts = [...new Set(roster.map((a) => a.provider))].sort();
+  const index = hosts.indexOf(provider);
+  return PROVIDER_STYLES[(index >= 0 ? index : hosts.length) % PROVIDER_HUES] ?? "provider0";
 }
 
 /**
  * The hue for an agent known only by id: its host from the roster, else plain.
  * Views pass `state.agents`; this file stays free of the state type.
  */
-export function hostStyleById(
-  agents: ReadonlyArray<{ id: string; host: string }>,
+export function providerStyleById(
+  agents: ReadonlyArray<{ id: string; provider: string }>,
   id: string,
 ): Style {
   const agent = agents.find((a) => a.id === id);
-  return agent ? hostStyle(agents, agent.host) : "plain";
+  return agent ? providerStyle(agents, agent.provider) : "plain";
 }
 
 export type Depth = "none" | "16" | "256" | "truecolor";
@@ -94,12 +104,12 @@ const SGR_16: Record<Style, string> = {
   group: "34",
   dm: "36",
   accent: "35",
-  host0: "94",
-  host1: "95",
-  host2: "93",
-  host3: "96",
-  host4: "92",
-  host5: "91",
+  provider0: "94",
+  provider1: "95",
+  provider2: "93",
+  provider3: "96",
+  provider4: "92",
+  provider5: "91",
 };
 
 /**
@@ -116,12 +126,12 @@ const SGR_256: Record<Style, string> = {
   group: "38;5;141",
   dm: "38;5;73",
   accent: "38;5;208",
-  host0: "38;5;75",
-  host1: "38;5;205",
-  host2: "38;5;214",
-  host3: "38;5;44",
-  host4: "38;5;112",
-  host5: "38;5;135",
+  provider0: "38;5;75",
+  provider1: "38;5;205",
+  provider2: "38;5;214",
+  provider3: "38;5;44",
+  provider4: "38;5;112",
+  provider5: "38;5;135",
 };
 
 /** Escape sequence that starts `style`, or "" when nothing needs to change from plain. */

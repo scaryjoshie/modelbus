@@ -2,7 +2,7 @@ import { conversationLabel, selectedConversation } from "../filter.ts";
 import { TITLE_ROWS } from "../layout.ts";
 import type { Grid, Rect } from "../screen.ts";
 import type { ChatMessage, Conversation, State } from "../state.ts";
-import { hostStyle } from "../style.ts";
+import { providerStyle } from "../style.ts";
 import { clock } from "../text.ts";
 import { EMPTY } from "./empty.ts";
 import { type Line, memberLine, putLine } from "./spans.ts";
@@ -29,7 +29,7 @@ const dimLine = (text: string): Line => [{ text, style: "dim" }];
 
 function headerLine(m: ChatMessage, roster: State["agents"]): Line {
   return [
-    { text: m.fromName, style: hostStyle(roster, m.fromHost) },
+    { text: m.fromName, style: providerStyle(roster, m.fromProvider) },
     { text: `${GAP}${clock(m.createdAt)}`, style: "dim" },
   ];
 }

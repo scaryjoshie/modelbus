@@ -12,10 +12,10 @@ import {
   update,
 } from "./state.ts";
 
-const agent = (id: string, host = "h", extra: Partial<Agent> = {}): Agent => ({
+const agent = (id: string, provider = "h", extra: Partial<Agent> = {}): Agent => ({
   id,
   name: id,
-  host,
+  provider,
   lastSeen: 0,
   purpose: null,
   reachable: true,
@@ -43,7 +43,7 @@ const chatMessage = (seq: number, from = "a"): ChatMessage => ({
   body: `hello ${seq}`,
   createdAt: 0,
   fromName: from,
-  fromHost: "h",
+  fromProvider: "h",
 });
 
 const size = { cols: 120, rows: 8 };

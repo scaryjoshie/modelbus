@@ -16,9 +16,9 @@ import {
  */
 
 /**
- * An agent: our permanent id and display name, plus the host that holds its line
- * and the host's own key for it. Same (host, hostKey) is the same agent forever.
- * The key is opaque to the core; only the host's provider knows what it means.
+ * An agent: our permanent id and display name, plus the provider that holds its
+ * line and that provider's own key for it. Same (provider, key) is the same agent
+ * forever. The key is opaque to the core; only the provider knows what it means.
  *
  * The name follows the host's until a person pins it by renaming; the previous
  * name stays as an alias so a send addressed the old way still lands.
@@ -28,8 +28,10 @@ export const agents = sqliteTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull().unique(),
-    host: text("host").notNull(),
-    hostKey: text("host_key").notNull(),
+    /** Which provider holds its line; `unspecified` for a process with none, `web` for the web door. */
+    provider: text("provider").notNull(),
+    /** The provider's own id for the session, opaque to core, never a secret. */
+    key: text("key").notNull(),
     lastSeen: integer("last_seen").notNull(),
     /** 1 once a person renamed it; the host's renames no longer apply. */
     namePinned: integer("name_pinned").notNull().default(0),
@@ -38,7 +40,7 @@ export const agents = sqliteTable(
     /** What the agent is for, in one line, set by a person or by the agent. Survives restarts. */
     purpose: text("purpose"),
   },
-  (t) => [uniqueIndex("agents_host_key").on(t.host, t.hostKey)],
+  (t) => [uniqueIndex("agents_provider_key").on(t.provider, t.key)],
 );
 
 /**

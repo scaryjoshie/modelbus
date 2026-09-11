@@ -165,7 +165,7 @@ export class Api {
       if (!m) return undefined;
       this.store.markRead([m.id], meId);
       const from = this.store.agentById(m.fromAgentId);
-      return { ...m, fromName: from?.name ?? "?", fromHost: from?.host ?? "?" };
+      return { ...m, fromName: from?.name ?? "?", fromProvider: from?.provider ?? "?" };
     };
     const first = take();
     if (first) return first;

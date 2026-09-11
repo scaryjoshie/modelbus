@@ -37,7 +37,7 @@ export interface Observation {
 
 /** What a process running inside a host session learns about itself. */
 export interface SelfIdentity {
-  host: string;
+  provider: string;
   key: string;
   name: string;
   /** Provider-specific runtime info to hand the daemon (e.g. a socket and token). */
@@ -93,8 +93,8 @@ export interface Connector {
 }
 
 export interface Provider {
-  /** Existing wire/storage namespace; not an authentication credential. */
-  readonly host: string;
+  /** The provider's name, the value its agents carry in `provider`; not a credential. */
+  readonly name: string;
   readonly discovery?: Discovery;
   readonly connector?: Connector;
   /** Inside a host's child process: which session is this? Null if unrecognized. */

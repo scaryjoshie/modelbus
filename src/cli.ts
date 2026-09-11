@@ -154,11 +154,11 @@ const commands: Record<string, Command> = {
       if (!r.agents.length) return console.log("nobody");
       console.log(
         table(
-          ["name", "purpose", "host", "delivery", "status", "active", "cwd"],
+          ["name", "purpose", "provider", "delivery", "status", "active", "cwd"],
           r.agents.map((a) => [
             a.name,
-            (a.purpose ?? a.title ?? "").slice(0, 40),
-            a.host,
+            (a.purpose ?? "").slice(0, 40),
+            a.provider,
             a.reachable ? (a.note ?? "reachable") : `no (${a.note ?? "?"})`,
             a.status ?? "",
             a.activeAt === undefined ? "" : age(a.activeAt),

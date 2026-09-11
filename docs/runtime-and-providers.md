@@ -41,7 +41,7 @@ Keep these concepts distinct as the implementation grows:
 
 These are conceptual distinctions, not a requirement for four new tables/classes.
 The current implementation has one instance per `host` namespace; it does not yet
-provide a general provider-instance registry. The existing `host` and `hostKey`
+provide a general provider-instance registry. The `provider` and `key`
 wire/database fields remain for compatibility and their keys are not credentials.
 
 ## Independent operations, composed by a caller

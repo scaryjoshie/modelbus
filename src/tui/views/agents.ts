@@ -2,19 +2,19 @@ import { visibleAgents } from "../filter.ts";
 import { bodyRows, TITLE_ROWS } from "../layout.ts";
 import type { Grid, Rect } from "../screen.ts";
 import type { Agent, State } from "../state.ts";
-import { hostStyle, type Style } from "../style.ts";
+import { providerStyle, type Style } from "../style.ts";
 import { age, fitRight, truncate, width } from "../text.ts";
 import { drawEmpty, EMPTY, REGISTER_HINT } from "./empty.ts";
 
 /**
  * The roster: one row per agent (a mark when it is pending, then name, purpose,
- * host, reachability, status, last active), the cursor row inverse, sorted and
+ * provider, reachability, status, last active), the cursor row inverse, sorted and
  * filtered by `filter.ts`. A name and its host tag share the host's hue, so the
  * color says where an agent runs and the tag is its legend; the mark is accent.
  * The purpose column shows what a person or the agent said it is for, else the
  * host's own title. Columns are sized from the whole visible list, so scrolling
  * never shifts one; when the pane is narrow the least useful columns go first
- * (host, then active, then status) and the purpose keeps the rest.
+ * (provider, then active, then status) and the purpose keeps the rest.
  */
 
 /** The pending mark: one cell at the row's left, blank on unmarked rows. */
@@ -36,7 +36,7 @@ const PURPOSE_MIN_COLS = 12;
 /** "up" or "down". */
 const REACH_COLS = 4;
 /** Widest a host name may push the name column; longer ones get an ellipsis. */
-const HOST_MAX_COLS = 12;
+const PROVIDER_MAX_COLS = 12;
 const STATUS_MAX_COLS = 16;
 /** "down" plus its note grows the reachability column only up to this. */
 const REACH_NOTE_MAX_COLS = 24;
@@ -51,7 +51,7 @@ const UNREACHABLE = "down";
 export interface Columns {
   name: number;
   purpose: number;
-  host: number;
+  provider: number;
   reach: number;
   status: number;
   active: number;
@@ -81,7 +81,7 @@ function reachText(agent: Agent, cols: number): string {
 /** Cells everything but the purpose takes: the mark, and each drawn column with its gap. */
 const used = (c: Columns): number =>
   MARK_COLS +
-  [c.name, c.host, c.reach, c.status, c.active].reduce(
+  [c.name, c.provider, c.reach, c.status, c.active].reduce(
     (sum, w) => (w > 0 ? sum + w + GAP_COLS : sum),
     0,
   );
@@ -91,12 +91,12 @@ export function columns(w: number, rows: Agent[]): Columns {
   const c: Columns = {
     name: Math.max(1, Math.min(widest(rows.map((a) => a.name)), NAME_MAX_COLS)),
     purpose: 0,
-    host: Math.min(widest(rows.map((a) => a.host)), HOST_MAX_COLS),
+    provider: Math.min(widest(rows.map((a) => a.provider)), PROVIDER_MAX_COLS),
     reach: REACH_COLS,
     status: Math.min(widest(rows.map((a) => a.status)), STATUS_MAX_COLS),
     active: ACTIVE_COLS,
   };
-  const dropOrder: Array<keyof Columns> = ["host", "active", "status"];
+  const dropOrder: Array<keyof Columns> = ["provider", "active", "status"];
   for (const key of dropOrder) {
     if (w - used(c) >= PURPOSE_MIN_COLS) break;
     c[key] = 0;
@@ -133,15 +133,27 @@ function drawRow(row: Row, rect: Rect, c: Columns, now: number, roster: Agent[],
   let x = rect.x;
   if (row.pending) grid.put(x, y, PENDING_MARK, style("accent"), 1);
   x += MARK_COLS;
-  grid.put(x, y, truncate(agent.name, c.name), style(hostStyle(roster, agent.host)), c.name);
+  grid.put(
+    x,
+    y,
+    truncate(agent.name, c.name),
+    style(providerStyle(roster, agent.provider)),
+    c.name,
+  );
   x += c.name + GAP_COLS;
   if (c.purpose > 0) {
     grid.put(x, y, truncate(purposeText(agent), c.purpose), style("plain"), c.purpose);
     x += c.purpose + GAP_COLS;
   }
-  if (c.host > 0) {
-    grid.put(x, y, truncate(agent.host, c.host), style(hostStyle(roster, agent.host)), c.host);
-    x += c.host + GAP_COLS;
+  if (c.provider > 0) {
+    grid.put(
+      x,
+      y,
+      truncate(agent.provider, c.provider),
+      style(providerStyle(roster, agent.provider)),
+      c.provider,
+    );
+    x += c.provider + GAP_COLS;
   }
   grid.put(
     x,
