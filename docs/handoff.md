@@ -22,6 +22,11 @@ All committed on main. `architecture.md` describes the result; this is the list.
   `src/tui/`, no dependencies, importing only the RPC client. Built by an agent
   team from the research in `docs/tui/`; `docs/tui/plan.md` is the contract.
   Read-only over the bus: sending from it needs a decision on the person's identity.
+- Groups (`#name`), `who` scoped to groupmates, `rename` with pinning and an
+  alias, `conversations` and `history` reads; core sends into conversations.
+  Agreed model for the person: not an agent, a sender who can type into chats
+  they can see; not built yet. TUI v2 (tabs, `f`, `c` + Enter to connect, `r`)
+  being built by an agent team against `docs/tui/plan.md`.
 - CLAUDE.md gained a "How we work" section at Joshua's request. Read it first.
 
 Decided for the next passes: a secrets keeper inside the daemon (owner-only files,
