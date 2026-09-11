@@ -319,7 +319,12 @@ const commands: Record<string, Command> = {
         console.error(`registered as "${r.agent.name}"; use --token or MODELBUS_TOKEN`);
         console.log(r.token);
       } else {
-        console.log(`registered "${r.agent.name}" (${r.agent.provider})`);
+        const p = r.prompted;
+        const told =
+          p?.status === "delivered"
+            ? "told it to state its purpose"
+            : `could not tell it: ${p?.detail ?? "no way to reach it"}`;
+        console.log(`registered "${r.agent.name}" (${r.agent.provider}); ${told}`);
       }
     },
   },

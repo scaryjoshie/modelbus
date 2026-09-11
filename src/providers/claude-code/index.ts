@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { delivered, failed, type Outbound } from "../../core/delivery.ts";
+import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type {
   Delivered,
   Observation,
@@ -37,6 +37,7 @@ export class ClaudeCodeProvider implements Provider {
     /** Verified 2026-09-10: a queued message survives `--resume`. */
     queueSurvivesRestart: true,
     deliver: this.deliver.bind(this),
+    notify: this.notify.bind(this),
     attach: this.attach.bind(this),
   };
   /** Session tokens, by session id. Absent outside the daemon, where nothing is delivered. */
@@ -93,15 +94,9 @@ export class ClaudeCodeProvider implements Provider {
     outbound: Outbound,
     onRead: () => void,
   ): Promise<Delivered> {
-    const reg = liveSessions().find((s) => s.sessionId === sessionId);
-    const socketPath = reg?.socketPath;
-    const transcriptPath = reg?.transcriptPath;
-    const token = this.secrets?.get(sessionId);
-    if (!socketPath) return { result: failed("no inbox socket") };
-    if (!existsSync(socketPath)) return { result: failed("inbox socket missing") };
     const { text, marker } = attributed(outbound);
-    const fromOffset = transcriptPath ? fileOffset(transcriptPath) : 0;
-    await postViaHelper(socketPath, token, text);
+    const { result, transcriptPath, fromOffset } = await this.push(sessionId, text);
+    if (result.status === "failed") return { result };
     const watch = transcriptPath
       ? watchTranscript({
           path: transcriptPath,
@@ -111,10 +106,30 @@ export class ClaudeCodeProvider implements Provider {
           onFound: onRead,
         })
       : undefined;
+    return { result, watch };
+  }
+
+  /** Post text into the session's inbox; the transcript offset from before, for a watch. */
+  private async push(
+    sessionId: string,
+    text: string,
+  ): Promise<{ result: DeliveryResult; transcriptPath?: string; fromOffset: number }> {
+    const reg = liveSessions().find((s) => s.sessionId === sessionId);
+    const socketPath = reg?.socketPath;
+    const transcriptPath = reg?.transcriptPath;
+    const token = this.secrets?.get(sessionId);
+    if (!socketPath) return { result: failed("no inbox socket"), fromOffset: 0 };
+    if (!existsSync(socketPath)) return { result: failed("inbox socket missing"), fromOffset: 0 };
+    const fromOffset = transcriptPath ? fileOffset(transcriptPath) : 0;
+    await postViaHelper(socketPath, token, text);
     const result = token
       ? delivered("inbox socket, with token")
       : delivered("inbox socket, no token: the session may ask its user");
-    return { result, watch };
+    return { result, transcriptPath, fromOffset };
+  }
+
+  private async notify(sessionId: string, text: string): Promise<DeliveryResult> {
+    return (await this.push(sessionId, text)).result;
   }
 
   configure = configure;

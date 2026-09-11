@@ -88,6 +88,12 @@ export interface Connector {
    * provider keeps nothing running; whatever it starts comes back as `watch`.
    */
   deliver(key: string, outbound: Outbound, onRead: () => void): Promise<Delivered>;
+  /**
+   * Put one line into the session with no message behind it: how a session is
+   * told that someone registered it and that it should state its purpose.
+   * Nothing is stored and nothing is watched.
+   */
+  notify?(key: string, text: string): Promise<DeliveryResult>;
   /** Accept runtime information a session hands over about itself (secrets stay here). */
   attach?(key: string, info: Record<string, unknown>): void;
 }

@@ -484,13 +484,20 @@ describe("protocol: candidates", () => {
   test("a seen session is a candidate; reads never register it, a send or a group does", async () => {
     const unix = join(dir, "d.sock");
     const seen = ["north", "south"];
+    const told: Array<{ key: string; text: string }> = [];
     const provider: Provider = {
       name: "fake",
       discovery: {
         observe: async () =>
           seen.map((n) => ({ key: `k-${n}`, name: n, relationship: "top-level", reachable: true })),
       },
-      connector: { deliver: async () => ({ result: { status: "delivered" } }) },
+      connector: {
+        deliver: async () => ({ result: { status: "delivered" } }),
+        notify: async (key, text) => {
+          told.push({ key, text });
+          return { status: "delivered" };
+        },
+      },
     };
     const d = createDaemon({
       store: new Store(join(dir, "d.db")),
@@ -523,6 +530,10 @@ describe("protocol: candidates", () => {
       expect(reg.token).toBeUndefined(); // its provider holds the line; no token
       expect(reg.agent.provider).toBe("fake");
       expect(reg.agent.purpose).toBe("guards the north");
+      // and the session is told, so it can complete registration itself
+      expect(reg.prompted?.status).toBe("delivered");
+      expect(told.map((t) => t.key)).toEqual(["k-north"]);
+      expect(told[0]?.text).toMatch(/registered on modelbus as "north".*register tool/);
       await expect(rpc("register", { name: "north" }, undefined, unix)).rejects.toThrow(
         /already registered/,
       );
@@ -534,11 +545,17 @@ describe("protocol: candidates", () => {
       const after = await rpc("who", {}, undefined, unix);
       expect(after.agents.map((a) => a.name).sort()).toEqual(["north", "south"]);
       expect(after.candidates).toEqual([]);
+      await Bun.sleep(5); // the prompt is not awaited by send
+      expect(told.at(-1)?.key).toBe("k-south");
+      expect(told.at(-1)?.text).toContain("because north is messaging you");
 
       // a session registering itself gets a briefing of where it is and what waits
       seen.push("east");
       await d.providerManager.reconcile();
       await rpc("group", { name: "#compass", add: ["north", "east"] }, undefined, unix);
+      await Bun.sleep(5);
+      expect(told.at(-1)?.key).toBe("k-east");
+      expect(told.at(-1)?.text).toContain("added to #compass");
       await rpc("send", { to: "#compass", body: "welcome" }, north, unix);
       const east = { kind: "self", provider: "fake", key: "k-east", name: "east" } as const;
       const brief = await rpc("register", { purpose: "faces east" }, east, unix);

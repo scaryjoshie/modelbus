@@ -68,7 +68,7 @@ local POC protocol is not yet an authenticated cloud/provider-delegation protoco
 | method | params | identity | returns |
 |---|---|---|---|
 | `ping` | | no | `{ok, pid}` |
-| `register` | `{name?, purpose?, provider?}`: with a self identity, registers the caller; else a candidate by name (no token), else a new process (token minted) | optional | `{agent, token?, briefing: {groups, unread}}` |
+| `register` | `{name?, purpose?, provider?}`: with a self identity, registers the caller (again, to state its purpose); else a candidate by name (no token; the session is prompted to register itself), else a new process (token minted) | optional | `{agent, token?, briefing: {groups, unread}, prompted?}` |
 | `bind` | | yes | `{agent}` |
 | `attach` | provider-specific runtime info | optional: works before registration | `{attached, agent?}` |
 | `send` | `{to, body, wait?}`; `to` is an agent name or `#group` | yes | `{message, conversation, deliveries: [{to, status, detail?}], reply?}` |

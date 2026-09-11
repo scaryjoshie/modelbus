@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { delivered, failed, type Outbound } from "../../core/delivery.ts";
+import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type { Delivered, Observation, Provider, SelfIdentity } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { ancestors, cwdOf, listProcesses } from "../../util/ps.ts";
@@ -23,6 +23,7 @@ export class CodexProvider implements Provider {
     /** Verified 2026-09-10: a queued message is gone after `codex resume`. */
     queueSurvivesRestart: false,
     deliver: this.deliver.bind(this),
+    notify: this.notify.bind(this),
   };
 
   private async observe(): Promise<Observation[]> {
@@ -86,14 +87,8 @@ export class CodexProvider implements Provider {
     const { text, marker } = attributed(outbound);
     const meta = threadMeta(threadId);
     const fromOffset = meta.rolloutPath ? fileOffset(meta.rolloutPath) : 0;
-    const proc = Bun.spawn(["codex", "queue", "--thread", threadId, "--message", text], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if ((await proc.exited) !== 0) {
-      const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
-      return { result: failed(`codex queue: ${err || "failed"}`) };
-    }
+    const result = await this.push(threadId, text);
+    if (result.status === "failed") return { result };
     const watch = meta.rolloutPath
       ? watchTranscript({
           path: meta.rolloutPath,
@@ -103,7 +98,24 @@ export class CodexProvider implements Provider {
           onFound: onRead,
         })
       : undefined;
-    return { result: delivered("codex queue"), watch };
+    return { result, watch };
+  }
+
+  /** Queue text into the thread through Codex's own command. */
+  private async push(threadId: string, text: string): Promise<DeliveryResult> {
+    const proc = Bun.spawn(["codex", "queue", "--thread", threadId, "--message", text], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if ((await proc.exited) !== 0) {
+      const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
+      return failed(`codex queue: ${err || "failed"}`);
+    }
+    return delivered("codex queue");
+  }
+
+  private notify(threadId: string, text: string): Promise<DeliveryResult> {
+    return this.push(threadId, text);
   }
 
   configure = configure;

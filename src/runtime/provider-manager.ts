@@ -219,6 +219,17 @@ export class ProviderManager {
     }
   }
 
+  /** One line into an agent's session with no message behind it; sent, not stored. */
+  async notify(agent: Agent, text: string): Promise<DeliveryResult> {
+    const notify = this.providers.get(agent.provider)?.connector?.notify;
+    if (!notify) return { status: "sent", detail: "no way to prompt this session" };
+    try {
+      return await notify(agent.key, text);
+    } catch (e) {
+      return { status: "failed", detail: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   private presenceOf(agent: Agent): Presence | undefined {
     const own = this.statuses.get(agent.id);
     const o = this.observed.get(agent.provider)?.get(agent.key);

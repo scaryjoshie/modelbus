@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delivered, failed, type Outbound } from "../../core/delivery.ts";
+import { type DeliveryResult, delivered, failed, type Outbound } from "../../core/delivery.ts";
 import type { Delivered, Observation, Provider } from "../../runtime/provider.ts";
 import { attributed } from "../../util/attribution.ts";
 import { fileOffset, watchTranscript } from "../../util/watch.ts";
@@ -27,6 +27,7 @@ export class AsideProvider implements Provider {
   readonly discovery = { observe: this.observe.bind(this) };
   readonly connector = {
     deliver: this.deliver.bind(this),
+    notify: this.notify.bind(this),
   };
   /** Which account each observed session belongs to; the CLI needs it. */
   private readonly accountOf = new Map<string, number>();
@@ -63,10 +64,25 @@ export class AsideProvider implements Provider {
     onRead: () => void,
   ): Promise<Delivered> {
     const { text, marker } = attributed(outbound);
+    const { result, path, fromOffset } = await this.push(sessionId, text);
+    if (result.status === "failed") return { result };
+    const watch = path
+      ? watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onRead })
+      : undefined;
+    return { result, watch };
+  }
+
+  /** Queue text into the session through Aside's CLI; the transcript offset from before, for a watch. */
+  private async push(
+    sessionId: string,
+    text: string,
+  ): Promise<{ result: DeliveryResult; path?: string; fromOffset: number }> {
     const account =
       this.accountOf.get(sessionId) ?? accounts().find((a) => transcriptPath(a, sessionId));
-    if (account === undefined) return { result: failed("account for session not found") };
-    if (!existsSync(asideCli())) return { result: failed("aside cli not installed") };
+    if (account === undefined)
+      return { result: failed("account for session not found"), fromOffset: 0 };
+    if (!existsSync(asideCli()))
+      return { result: failed("aside cli not installed"), fromOffset: 0 };
     const path = transcriptPath(account, sessionId);
     const fromOffset = path ? fileOffset(path) : 0;
     const proc = Bun.spawn(
@@ -75,12 +91,13 @@ export class AsideProvider implements Provider {
     );
     if ((await proc.exited) !== 0) {
       const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? "";
-      return { result: failed(`aside session queue: ${err || "failed"}`) };
+      return { result: failed(`aside session queue: ${err || "failed"}`), fromOffset };
     }
-    const watch = path
-      ? watchTranscript({ path, marker, fromOffset, accept: isUserEntry, onFound: onRead })
-      : undefined;
-    return { result: delivered("aside session queue"), watch };
+    return { result: delivered("aside session queue"), path, fromOffset };
+  }
+
+  private async notify(sessionId: string, text: string): Promise<DeliveryResult> {
+    return (await this.push(sessionId, text)).result;
   }
 
   configure = configure;

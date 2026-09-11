@@ -304,6 +304,32 @@ describe("provider manager", () => {
     });
   });
 
+  test("notify goes through the provider's own door, or says it cannot", async () => {
+    const store = new Store(":memory:");
+    const lines: string[] = [];
+    const talkative: Provider = {
+      name: "talks",
+      connector: {
+        deliver: async () => ({ result: { status: "delivered" as const } }),
+        notify: async (_key, text) => {
+          lines.push(text);
+          return { status: "delivered" as const };
+        },
+      },
+    };
+    const mute: Provider = {
+      name: "mute",
+      connector: { deliver: async () => ({ result: { status: "delivered" as const } }) },
+    };
+    const t = new ProviderManager(store, [talkative, mute]);
+    const a = t.register({ provider: "talks", key: "k", name: "a" });
+    const b = t.register({ provider: "mute", key: "k", name: "b" });
+    expect((await t.notify(a, "hello")).status).toBe("delivered");
+    expect(lines).toEqual(["hello"]);
+    expect((await t.notify(b, "hello")).status).toBe("sent");
+    store.close();
+  });
+
   test("a failing provider keeps its last presence", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];

@@ -189,10 +189,12 @@ results with details. It does not register agents, call setup, or deliver messag
 
 Every 3 s, and on demand, the manager runs discovery and keeps what it saw in
 memory: each top-level observation is a *candidate*, keyed by (provider, key).
-Discovery never creates an agent. Registration is the one door into core: a
-session registers itself (the shim's `register` tool, stating its purpose), a
-person registers a candidate by name, or a candidate is named as a recipient or
-a group member and is registered on the way in. Reads never register anything.
+Discovery never creates an agent. Registration is the one door into core, and it
+is the agent's act: the shim's `register` tool, stating its purpose. A person
+registering a candidate by name, or naming it as a recipient or a group member,
+creates the row and *prompts the session* through its provider's door (`notify`:
+one line, nothing stored) to complete registration itself. Reads never register
+anything.
 A registered agent's presence is its candidate's observation; its name follows
 the host's until a person pins it. A throwing provider
 keeps its previous presence. An

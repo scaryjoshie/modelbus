@@ -86,15 +86,27 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     return agent;
   };
   /**
-   * Naming a candidate as a recipient or a group member registers it: being
-   * put in a chat is one of the ways onto the bus. Reads never do this.
+   * Registering a session on its behalf is a trigger, not a substitute: the
+   * session is told, in its own context, and completes registration itself by
+   * stating its purpose. `why` says what put it on the bus.
    */
-  const agentNamedOrCandidate = (name: string): Agent => {
+  const promptToRegister = (agent: Agent, why: string) =>
+    providerManager.notify(
+      agent,
+      `[modelbus] You are registered on modelbus as "${agent.name}"${why}. Call the register tool with one line saying what you are working on.`,
+    );
+  /**
+   * Naming a candidate as a recipient or a group member registers it and tells
+   * it: being put in a chat is one of the ways onto the bus. Reads never do this.
+   */
+  const agentNamedOrCandidate = (name: string, why: string): Agent => {
     const agent = store.agentByName(name);
     if (agent) return agent;
     const c = providerManager.candidateNamed(name);
-    if (c) return providerManager.register({ provider: c.provider, key: c.key, name: c.name });
-    throw new ApiError(`no agent named "${name}"; try who`);
+    if (!c) throw new ApiError(`no agent named "${name}"; try who`);
+    const registered = providerManager.register({ provider: c.provider, key: c.key, name: c.name });
+    void promptToRegister(registered, why);
+    return registered;
   };
   /** What a newly registered agent is told: where it is and what is waiting. */
   const briefing = async (agentId: string) => ({
@@ -109,7 +121,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
   /** Where a send from `from` addressed `to` goes: a group by #name, else the DM with that agent. */
   const conversationFor = (from: Agent, to: string): Conversation => {
     if (to.startsWith("#")) return groupNamed(to);
-    const other = agentNamedOrCandidate(to);
+    const other = agentNamedOrCandidate(to, ` because ${from.name} is messaging you`);
     if (other.id === from.id) throw new ApiError("cannot send to yourself");
     return store.dm(from.id, other.id);
   };
@@ -166,7 +178,8 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
         if (candidate) {
           const agent = providerManager.register(candidate);
           const described = p.purpose ? api.describe(agent.id, p.purpose) : agent;
-          return { agent: described, briefing: await briefing(agent.id) };
+          const prompted = await promptToRegister(described, "");
+          return { agent: described, briefing: await briefing(agent.id), prompted };
         }
         // Identity (a fresh non-secret key) and the proof (a secret) are distinct.
         const secret = randomBytes(24).toString("base64url");
@@ -272,7 +285,9 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       handler: (p) => {
         const r = api.group({
           name: p.name.replace(/^#/, ""),
-          add: p.add?.map((n) => agentNamedOrCandidate(n).id),
+          add: p.add?.map(
+            (n) => agentNamedOrCandidate(n, ` and added to #${p.name.replace(/^#/, "")}`).id,
+          ),
           remove: p.remove?.map((n) => agentNamed(n).id),
         });
         return {
