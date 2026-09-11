@@ -102,6 +102,8 @@ export type Msg =
 export type Effect =
   | { type: "openDm"; a: string; b: string }
   | { type: "createGroup"; name: string; members: string[] }
+  /** Register a candidate by name; its purpose is left for the agent to state. */
+  | { type: "register"; name: string }
   | { type: "rename"; agent: string; name: string }
   | { type: "loadHistory"; id: string; spec: string };
 
@@ -373,7 +375,17 @@ function mark(state: State): State {
 }
 
 /** Enter on Agents: two marked agents make a DM; more need a name first. */
+/**
+ * Enter on the Agents tab: with nothing pending, register the selected candidate;
+ * with two pending, open their DM; with more, name a group.
+ */
 function connect(state: State): Step {
+  if (state.pending.length === 0) {
+    const selected = selectedAgent(state);
+    if (selected && !selected.registered)
+      return step(state, { type: "register", name: selected.name });
+    return step(state);
+  }
   const names = state.pending
     .map((id) => state.agents.find((a) => a.id === id)?.name)
     .filter((n): n is string => n !== undefined);

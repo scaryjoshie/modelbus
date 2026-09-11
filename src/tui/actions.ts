@@ -61,5 +61,8 @@ async function run(effect: Effect, request: typeof rpc): Promise<Msg | undefined
     case "rename":
       await request("rename", { agent: effect.agent, name: effect.name });
       return undefined;
+    case "register":
+      await request("register", { name: effect.name });
+      return undefined;
   }
 }

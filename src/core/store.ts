@@ -347,6 +347,7 @@ export class Store {
         .from(participants)
         .innerJoin(agents, eq(agents.id, participants.agentId))
         .where(eq(participants.conversationId, g.id))
+        .orderBy(agents.name)
         .all()
         .map((r) => r.name),
     }));

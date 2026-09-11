@@ -73,6 +73,19 @@ const polled = (
 ) => send(s, { type: "poll", agents, messages, conversations, at: 1 });
 
 describe("update: agents", () => {
+  test("Enter on a candidate with nothing pending registers it; on an agent it does nothing", () => {
+    const rows = [agent("a", "h"), agent("cand", "h", { registered: false, id: "candidate:h:k" })];
+    const s = polled(initialState(size, 0), rows);
+    expect(keys(s, ENTER).effect).toBeUndefined(); // "a" is registered
+    expect(keys(typed(s, DOWN), ENTER).effect).toEqual({ type: "register", name: "cand" });
+    // with marks pending, Enter connects instead
+    expect(keys(typed(s, `c${DOWN}c`), ENTER).effect).toEqual({
+      type: "openDm",
+      a: "a",
+      b: "cand",
+    });
+  });
+
   test("first poll selects the first row in host-then-name order", () => {
     const s = polled(initialState(size, 0), [agent("b", "z"), agent("c", "a"), agent("a", "z")]);
     expect(s.selectedAgentId).toBe("c");

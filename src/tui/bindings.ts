@@ -1,3 +1,4 @@
+import { selectedAgent } from "./filter.ts";
 import type { State } from "./state.ts";
 
 /**
@@ -42,7 +43,20 @@ export const BINDINGS: readonly Binding[] = [
   { keys: ["up", "down"], action: "move", help: "move", when: noOverlay, hint: true },
   { keys: ["f"], action: "filter", help: "filter", when: noOverlay, hint: true },
   { keys: ["c"], action: "mark", help: "mark pending", when: agentsTab, hint: true },
-  { keys: ["enter"], action: "connect", help: "connect pending", when: agentsTab, hint: true },
+  {
+    keys: ["enter"],
+    action: "connect",
+    help: "register",
+    when: (s) => agentsTab(s) && s.pending.length === 0 && selectedAgent(s)?.registered === false,
+    hint: true,
+  },
+  {
+    keys: ["enter"],
+    action: "connect",
+    help: "connect pending",
+    when: (s) => agentsTab(s) && s.pending.length > 0,
+    hint: true,
+  },
   { keys: ["enter"], action: "focusMessages", help: "read messages", when: chatsList, hint: true },
   { keys: ["r"], action: "rename", help: "rename", when: agentsTab, hint: true },
   { keys: ["escape"], action: "back", help: "back out one level" },
