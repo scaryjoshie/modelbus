@@ -32,13 +32,13 @@ describe("dm basics", () => {
   });
 
   test("sender does not receive own message", async () => {
-    const { api, a, b, ab } = fresh();
+    const { api, a, ab } = fresh();
     await api.send({ fromId: a.id, conversationId: ab, body: "x" });
     expect((await api.pull({ agentId: a.id })).items).toHaveLength(0);
   });
 
   test("binding is identity; names de-duplicate and follow the host", () => {
-    const { store, a, ab } = fresh();
+    const { store, a } = fresh();
     const again = bindTest(store, "a", "alice");
     expect(again.id).toBe(a.id);
     const clash = bindTest(store, "c", "alice");
@@ -61,7 +61,7 @@ describe("dm basics", () => {
 
 describe("guards", () => {
   test("identical message within window is dropped", async () => {
-    const { api, a, b, ab } = fresh();
+    const { api, a, ab } = fresh();
     await api.send({ fromId: a.id, conversationId: ab, body: "same" });
     await expect(api.send({ fromId: a.id, conversationId: ab, body: "same" })).rejects.toThrow(
       /identical/,
@@ -69,7 +69,7 @@ describe("guards", () => {
   });
 
   test("rate limit refuses the send after the limit", async () => {
-    const { api, a, b, ab } = fresh();
+    const { api, a, ab } = fresh();
     for (let i = 0; i < DEFAULT_LIMITS.rateLimit; i++) {
       await api.send({ fromId: a.id, conversationId: ab, body: `m${i}` });
     }
@@ -79,7 +79,7 @@ describe("guards", () => {
   });
 
   test("body cap", async () => {
-    const { api, a, b, ab } = fresh();
+    const { api, a, ab } = fresh();
     await expect(
       api.send({
         fromId: a.id,

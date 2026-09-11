@@ -21,20 +21,28 @@ const draw = (state: State, h: number) => {
 const rows = (g: Grid) => Array.from({ length: g.rows }, (_, y) => g.text(y).trimEnd());
 
 describe("drawHelp", () => {
-  test("a title, then one row per binding of the screen underneath, in table order", () => {
+  test("a plain title, then one row per binding of the screen underneath, in table order", () => {
     const state = base();
     const entries = active({ ...state, help: false });
     const g = draw(state, 30);
     const lines = rows(g);
     expect(lines[0]).toBe("keys");
-    expect(g.cells[0]?.[0]?.style).toBe("title");
+    expect(g.cells[0]?.[0]?.style).toBe("plain");
     entries.forEach((b, i) => {
       const line = lines[i + 1] ?? "";
       expect(line.trimStart().startsWith(label(b))).toBe(true);
       expect(line.endsWith(b.help)).toBe(true);
     });
-    // The overlay covers the whole body: nothing of the list shows through below it.
-    expect(lines[entries.length + 1]).toBe("");
+  });
+
+  test("covers the whole body: nothing underneath shows through, and nothing outside is touched", () => {
+    const state = base();
+    const entries = active({ ...state, help: false });
+    const g = draw(state, 30);
+    const lines = rows(g);
+    for (let y = entries.length + 1; y < 30; y++) expect(lines[y]).toBe("");
+    expect(lines[30]).toBe("#".repeat(COLS));
+    for (let y = 0; y < 30; y++) expect(g.text(y)).not.toContain("#");
   });
 
   test("keys are right-aligned in one plain column; help text is dim", () => {
@@ -53,11 +61,21 @@ describe("drawHelp", () => {
   test("lists the keys of the screen underneath, not only the few that work while it is open", () => {
     const lines = rows(draw(base(), 30));
     expect(lines.some((l) => l.trimStart().startsWith("q  quit"))).toBe(true);
-    expect(lines.some((l) => l.includes("down"))).toBe(true);
+    expect(lines.some((l) => l.includes("↑/↓"))).toBe(true);
     expect(lines.some((l) => l.includes("filter"))).toBe(true);
-    const detail = rows(draw(base({ focus: "detail" }), 30));
-    expect(detail.some((l) => l.trimStart().startsWith("q  close"))).toBe(true);
-    expect(detail.some((l) => l.includes("open"))).toBe(false);
+    expect(lines.some((l) => l.includes("mark pending"))).toBe(true);
+    expect(lines.some((l) => l.includes("esc"))).toBe(true);
+    expect(lines.some((l) => l.includes("ctrl+c"))).toBe(true);
+  });
+
+  test("follows the tab: the Chats tab reads messages and does not rename or mark", () => {
+    const chats = rows(draw(base({ tab: "chats" }), 30));
+    expect(chats.some((l) => l.includes("read messages"))).toBe(true);
+    expect(chats.some((l) => l.includes("rename"))).toBe(false);
+    expect(chats.some((l) => l.includes("mark pending"))).toBe(false);
+    // With the arrows already in the messages pane, Enter has nothing left to do.
+    const reading = rows(draw(base({ tab: "chats", focus: "messages" }), 30));
+    expect(reading.some((l) => l.includes("read messages"))).toBe(false);
   });
 
   test("too short: shows what fits and says how many are hidden", () => {
@@ -66,7 +84,7 @@ describe("drawHelp", () => {
     const g = draw(state, 3);
     const lines = rows(g);
     expect(lines[0]).toBe("keys");
-    expect(lines[1]?.endsWith("quit")).toBe(true);
+    expect(lines[1]?.endsWith("switch tab")).toBe(true);
     expect(lines[2]).toBe(`${total - 1} more, not shown at this height`);
     expect(g.cells[2]?.[0]?.style).toBe("dim");
     expect(lines[3]).toBe("#".repeat(COLS));

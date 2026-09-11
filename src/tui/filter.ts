@@ -1,13 +1,14 @@
-import type { Agent, Message, State } from "./state.ts";
+import type { Agent, Conversation, Message, State } from "./state.ts";
 
 /**
  * What the lists show: the last poll's data, filtered by the filter text and in a
  * fixed order. Computed from state on demand; `update` and the views both call
  * these, so the cursor and the drawing agree on which row is which.
  *
- * The order is fixed (host, then name; messages by sequence) so new data never
- * reorders rows that were already there. Comparison is by code unit, not locale,
- * so two machines with different locales list the same roster the same way.
+ * The order is fixed (agents by host then name; conversations as the daemon
+ * lists them, newest activity first; messages by sequence) so new data never
+ * reorders rows that were already there. Comparison is by code unit, not
+ * locale, so two machines with different locales list the same roster the same way.
  */
 
 /** True when the filter is empty or some field contains it, ignoring case. */
@@ -23,18 +24,22 @@ const byHostThenName = (a: Agent, b: Agent): number =>
 
 const bySeq = (a: Message, b: Message): number => a.seq - b.seq;
 
-/** The roster as the agents view lists it. */
+/** The roster as the agents tab lists it. */
 export function visibleAgents(state: State): Agent[] {
   return state.agents
     .filter((a) => matches(state.filter, [a.name, a.host, a.cwd, a.status, a.title]))
     .sort(byHostThenName);
 }
 
-/** The message log as the log view lists it, oldest first. */
-export function visibleMessages(state: State): Message[] {
-  return state.messages
-    .filter((m) => matches(state.filter, [m.fromName, m.toName, m.status, m.body]))
-    .sort(bySeq);
+/** The conversations as the chats tab lists them, in the daemon's order. */
+export function visibleConversations(state: State): Conversation[] {
+  return state.conversations.filter((c) =>
+    matches(state.filter, [
+      conversationLabel(c),
+      ...c.participants.map((p) => p.name),
+      c.last?.body,
+    ]),
+  );
 }
 
 /** Messages the agent sent or received, oldest first. Names are unique on the bus. */
@@ -49,7 +54,18 @@ export function selectedAgent(state: State): Agent | undefined {
   return state.agents.find((a) => a.id === state.selectedAgentId);
 }
 
-/** The message under the cursor, if any. */
-export function selectedMessage(state: State): Message | undefined {
-  return state.messages.find((m) => m.seq === state.selectedSeq);
+/** The conversation under the cursor, if any. */
+export function selectedConversation(state: State): Conversation | undefined {
+  return state.conversations.find((c) => c.id === state.selectedConversationId);
+}
+
+/** "#name" for a group, "dm" for a pair: the kind column of the chats list. */
+export function conversationLabel(c: Conversation): string {
+  return c.kind === "group" ? `#${c.name ?? ""}` : "dm";
+}
+
+/** How `history` and `log` name this conversation: "#name" or "a,b". */
+export function conversationSpec(c: Conversation): string {
+  if (c.kind === "group") return `#${c.name ?? ""}`;
+  return c.participants.map((p) => p.name).join(",");
 }

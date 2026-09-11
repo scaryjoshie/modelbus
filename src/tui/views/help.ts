@@ -5,9 +5,10 @@ import { fitRight, width } from "../text.ts";
 
 /**
  * The `?` overlay: every binding of the screen underneath, in table order, with
- * its keys right-aligned in one column and its help text in `dim`. It clears
- * the rows it covers first so the body does not show through; when the body is
- * too short for the table, the last row says how many bindings are hidden.
+ * its keys right-aligned in one plain column and its help text in `dim`. It
+ * clears the whole body first so nothing shows through; when the body is too
+ * short for the table, the last row says how many bindings are hidden. The
+ * title is plain: `title` marks the active tab and nothing else.
  */
 
 const TITLE = "keys";
@@ -29,7 +30,7 @@ export function drawHelp(state: State, rect: Rect, grid: Grid): void {
   const { rows, hidden } = shown(entries, rect.h - 1);
   // The whole body, not only the rows used: the list must not show through.
   grid.fill(rect);
-  grid.put(rect.x, rect.y, TITLE, "title", rect.w);
+  grid.put(rect.x, rect.y, TITLE, "plain", rect.w);
 
   const keyW = Math.max(0, ...rows.map((b) => width(label(b))));
   rows.forEach((b, i) => {

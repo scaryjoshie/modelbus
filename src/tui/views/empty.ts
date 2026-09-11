@@ -11,11 +11,14 @@ import { truncate } from "../text.ts";
 export const REGISTER_HINT = "modelbus register --name <name>";
 
 export const EMPTY = {
-  noAgents: "no agents on the bus",
   /** Nothing has been learned yet: no poll has succeeded. */
   noData: "waiting for the daemon",
+  noAgents: "no agents on the bus",
   noMatch: "nothing matches the filter",
-  noMessages: "no messages",
+  noChats: "no chats yet",
+  /** A conversation is selected and its page has not arrived. */
+  loading: "loading",
+  noMessages: "no messages yet",
   nothingSelected: "nothing selected",
 } as const;
 

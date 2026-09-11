@@ -1,3 +1,5 @@
+import { runEffect } from "./actions.ts";
+import { conversationSpec, selectedConversation } from "./filter.ts";
 import { parseKeys } from "./keys.ts";
 import { DEFAULT_POLL_INTERVAL_MS, startPoller } from "./poll.ts";
 import { type Grid, render } from "./screen.ts";
@@ -7,8 +9,9 @@ import { isInteractive, openTerminal } from "./terminal.ts";
 import { view } from "./view.ts";
 
 /**
- * Wiring: terminal in, messages through `update`, frames out. One render per
- * frame at most, and only the rows that changed.
+ * Wiring: terminal in, messages through `update`, frames out, effects to the
+ * daemon and their answers back in as messages. One render per frame at most,
+ * and only the rows that changed.
  */
 
 /** Draw at most this often; 30 frames a second is what the TUI frameworks default to. */
@@ -29,6 +32,7 @@ export async function runTui(opts: TuiOptions = {}): Promise<void> {
   let state: State = initialState(term.size(), Date.now());
   let shown: Grid | undefined;
   let frame: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
 
   const draw = () => {
     frame = undefined;
@@ -37,22 +41,31 @@ export async function runTui(opts: TuiOptions = {}): Promise<void> {
     shown = next;
   };
   const dispatch = (msg: Msg) => {
-    state = update(state, msg);
+    if (finished) return;
+    const step = update(state, msg);
+    state = step.state;
     if (state.quit) return finish();
+    // An effect's answer arrives as a message like any other; a late one after quit is dropped.
+    if (step.effect) void runEffect(step.effect).then((reply) => reply && dispatch(reply));
     if (frame === undefined) frame = setTimeout(draw, FRAME_MS);
   };
 
   const poller = startPoller({
     intervalMs: opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     dispatch,
+    selected: () => {
+      const c = selectedConversation(state);
+      return c && { id: c.id, spec: conversationSpec(c) };
+    },
   });
   const clock = setInterval(() => dispatch({ type: "tick", now: Date.now() }), CLOCK_TICK_MS);
 
   let done: () => void = () => undefined;
-  const finished = new Promise<void>((resolve) => {
+  const exited = new Promise<void>((resolve) => {
     done = resolve;
   });
   function finish() {
+    finished = true;
     poller.stop();
     clearInterval(clock);
     if (frame !== undefined) clearTimeout(frame);
@@ -69,5 +82,5 @@ export async function runTui(opts: TuiOptions = {}): Promise<void> {
     dispatch({ type: "resize", size });
   });
   draw();
-  await finished;
+  await exited;
 }

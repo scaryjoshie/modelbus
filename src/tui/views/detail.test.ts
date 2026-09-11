@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Grid, type Rect } from "../screen.ts";
-import { type Agent, initialState, type Message, type State } from "../state.ts";
+import { type Agent, type Conversation, initialState, type Message, type State } from "../state.ts";
+import { hostStyle } from "../style.ts";
 import { clock } from "../text.ts";
-import { detailLines, drawDetail, wrap } from "./detail.ts";
+import { detailLines, drawDetail } from "./detail.ts";
 import { EMPTY } from "./empty.ts";
 
 const NOW = 100_000;
@@ -10,7 +11,7 @@ const NOW = 100_000;
 const agent = (id: string, extra: Partial<Agent> = {}): Agent => ({
   id,
   name: id,
-  host: "hostx",
+  host: "north-shell",
   lastSeen: NOW - 5000,
   reachable: true,
   ...extra,
@@ -31,9 +32,21 @@ const message = (seq: number, extra: Partial<Message> = {}): Message => ({
   ...extra,
 });
 
+const group = (name: string, members: string[]): Conversation => ({
+  id: `g-${name}`,
+  kind: "group",
+  key: `group:${name}`,
+  name,
+  createdAt: NOW - 9000,
+  participants: members.map((m) => ({ id: m, name: m })),
+  unread: 0,
+});
+
+const roster = [agent("ada"), agent("bo", { host: "zephyr" }), agent("cy", { host: "apex" })];
+
 const state = (extra: Partial<State> = {}): State => ({
   ...initialState({ cols: 120, rows: 20 }, NOW),
-  agents: [agent("ada"), agent("bo"), agent("cy")],
+  agents: roster,
   ...extra,
 });
 
@@ -48,37 +61,8 @@ const draw = (s: State, r: Rect = rect) => {
 const rows = (g: Grid, from: number, to: number) =>
   Array.from({ length: to - from + 1 }, (_, i) => g.text(from + i).trimEnd());
 
-describe("wrap", () => {
-  test("breaks between words and keeps newlines", () => {
-    expect(wrap("the quick brown fox", 9)).toEqual(["the quick", "brown fox"]);
-    expect(wrap("one\ntwo three", 20)).toEqual(["one", "two three"]);
-    expect(wrap("a\n\nb", 5)).toEqual(["a", "", "b"]);
-    expect(wrap("", 5)).toEqual([""]);
-  });
-
-  test("a word wider than the line is cut, other words are not", () => {
-    expect(wrap("abcdefghij kl", 4)).toEqual(["abcd", "efgh", "ij", "kl"]);
-    expect(wrap("ab cdefgh", 4)).toEqual(["ab", "cdef", "gh"]);
-  });
-
-  test("wide characters count as two cells and never straddle a line", () => {
-    expect(Bun.stringWidth("漢")).toBe(2);
-    expect(wrap("漢字漢字漢", 4)).toEqual(["漢字", "漢字", "漢"]);
-    expect(wrap("漢字漢", 3)).toEqual(["漢", "字", "漢"]);
-    expect(wrap("🙂🙂🙂", 4)).toEqual(["🙂🙂", "🙂"]);
-    expect(wrap("ok 🙂🙂", 5)).toEqual(["ok", "🙂🙂"]);
-    expect(wrap("ok 🙂 🙂", 5)).toEqual(["ok 🙂", "🙂"]);
-  });
-
-  test("leading indentation survives; a width under one still makes progress", () => {
-    expect(wrap("  code", 10)).toEqual(["  code"]);
-    expect(wrap("漢", 0)).toEqual(["漢"]);
-    expect(wrap("abc", -3)).toEqual(["a", "b", "c"]);
-  });
-});
-
 describe("drawDetail in the agents view", () => {
-  test("one field per row with dim labels and plain values, then the messages", () => {
+  test("one field per row with dim labels, then the messages", () => {
     const s = state({
       agents: [agent("ada", { status: "working", cwd: "/srv/project", title: "fix tests" })],
       selectedAgentId: "ada",
@@ -89,7 +73,7 @@ describe("drawDetail in the agents view", () => {
     expect(rows(g, 1, 11)).toEqual([
       "name      ada",
       "id        ada",
-      "host      hostx",
+      "host      north-shell",
       "reachable yes",
       "status    working",
       "title     fix tests",
@@ -100,10 +84,59 @@ describe("drawDetail in the agents view", () => {
       "  first",
     ]);
     expect(styleAt(g, 0, 1)).toBe("dim");
-    expect(styleAt(g, 10, 1)).toBe("plain");
+    expect(styleAt(g, 10, 2)).toBe("plain");
     expect(styleAt(g, 10, 4)).toBe("ok");
     expect(styleAt(g, 0, 10)).toBe("dim");
     expect(styleAt(g, g.text(10).indexOf("delivered"), 10)).toBe("ok");
+  });
+
+  test("the name and the host tag share the host's hue; the clock is dim", () => {
+    const g = draw(state({ selectedAgentId: "ada" }));
+    expect(styleAt(g, 10, 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, 12, 1)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, 10, 3)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, 10, 2)).toBe("plain");
+    const bo = draw(state({ selectedAgentId: "bo" }));
+    expect(styleAt(bo, 10, 1)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(bo, 10, 3)).toBe(hostStyle(roster, "zephyr"));
+    // No title, so "seen" is the seventh field.
+    const seen = g.text(7);
+    expect(seen).toMatch(/^seen {6}5s ago/);
+    expect(styleAt(g, seen.indexOf("ago"), 7)).toBe("plain");
+    expect(styleAt(g, seen.indexOf(":"), 7)).toBe("dim");
+  });
+
+  test("the groups the agent is in follow the fields, each #name in the group color", () => {
+    const s = state({
+      selectedAgentId: "bo",
+      conversations: [
+        group("ops", ["ada", "bo"]),
+        group("docs", ["cy"]),
+        group("plan", ["bo", "cy"]),
+        {
+          ...group("x", ["ada", "bo"]),
+          id: "d1",
+          kind: "dm",
+          key: "dm:ada:bo",
+          name: null,
+        },
+      ],
+    });
+    const g = draw(s);
+    expect(g.text(8).trimEnd()).toBe("in        #ops, #plan");
+    expect(styleAt(g, 0, 8)).toBe("dim");
+    expect(styleAt(g, 10, 8)).toBe("group");
+    expect(styleAt(g, 14, 8)).toBe("dim");
+    expect(styleAt(g, 16, 8)).toBe("group");
+    expect(g.text(9).trim()).toBe("");
+    expect(g.text(10).trimEnd()).toBe(EMPTY.noMessages);
+  });
+
+  test("an agent in no group has no 'in' line", () => {
+    const s = state({ selectedAgentId: "ada", conversations: [group("docs", ["cy"])] });
+    const g = draw(s);
+    expect(g.text(8).trim()).toBe("");
+    expect(g.text(9).trimEnd()).toBe(EMPTY.noMessages);
   });
 
   test("messages keep their order and multi-line bodies are indented", () => {
@@ -119,6 +152,23 @@ describe("drawDetail in the agents view", () => {
       "  second",
       "  line two",
     ]);
+  });
+
+  test("a message header colors both names by their host on the roster", () => {
+    const s = state({
+      selectedAgentId: "ada",
+      messages: [message(1, { fromAgentId: "ada", toName: "bo" })],
+    });
+    const g = draw(s);
+    const header = g.text(9);
+    expect(header.trimEnd()).toMatch(/ada → bo delivered$/);
+    expect(styleAt(g, header.indexOf("ada"), 9)).toBe(hostStyle(roster, "north-shell"));
+    expect(styleAt(g, header.indexOf("bo"), 9)).toBe(hostStyle(roster, "zephyr"));
+    expect(styleAt(g, header.indexOf("→"), 9)).toBe("plain");
+    const gone = draw(
+      state({ agents: [agent("ada")], selectedAgentId: "ada", messages: s.messages }),
+    );
+    expect(styleAt(gone, header.indexOf("bo"), 9)).toBe("plain");
   });
 
   test("unreachable shows in bad with the provider's note; title is omitted when absent", () => {
@@ -170,13 +220,6 @@ describe("drawDetail in the agents view", () => {
     expect(styleAt(g, 0, 9)).toBe("dim");
   });
 
-  test("scroll.detail slides the lines up under the title", () => {
-    const s = state({ selectedAgentId: "ada", scroll: { agents: 0, log: 0, detail: 3 } });
-    const g = draw(s);
-    expect(g.text(0)).toMatch(/^detail/);
-    expect(g.text(1)).toMatch(/^reachable/);
-  });
-
   test("nothing selected: one dim line", () => {
     const g = draw(state({ agents: [] }));
     expect(g.text(1).trimEnd()).toBe(EMPTY.nothingSelected);
@@ -184,9 +227,8 @@ describe("drawDetail in the agents view", () => {
     expect(g.text(2).trim()).toBe("");
   });
 
-  test("the title is bold only while the detail pane has focus", () => {
-    expect(styleAt(draw(state({ focus: "detail" })), 0, 0)).toBe("title");
-    expect(styleAt(draw(state({ focus: "list" })), 0, 0)).toBe("plain");
+  test("the title is plain: the pane has no focus", () => {
+    expect(styleAt(draw(state()), 0, 0)).toBe("plain");
   });
 
   test("drawing stays inside the rect", () => {
@@ -202,51 +244,5 @@ describe("drawDetail in the agents view", () => {
     expect(g.text(5)).toMatch(/^ {3}host/);
     expect(g.text(6).trim()).toBe("");
     expect(g.text(1).trim()).toBe("");
-  });
-});
-
-describe("drawDetail in the log view", () => {
-  const logState = (m: Message, extra: Partial<State> = {}) =>
-    state({ view: "log", messages: [m], selectedSeq: m.seq, ...extra });
-
-  test("header rows, a blank row, then the wrapped body", () => {
-    const m = message(3, {
-      status: "sent",
-      detail: "host not reachable",
-      body: "one two three four five six seven eight\nnine",
-    });
-    const g = draw(logState(m), { x: 0, y: 0, w: 30, h: 10 });
-    expect(rows(g, 1, 8)).toEqual([
-      "from      ada",
-      "to        bo",
-      "state     sent  host not reac…",
-      `sent      ${clock(NOW - 3000)}  3s ago`,
-      "",
-      "one two three four five six",
-      "seven eight",
-      "nine",
-    ]);
-    expect(styleAt(g, 0, 3)).toBe("dim");
-    expect(styleAt(g, 10, 3)).toBe("wait");
-    expect(styleAt(g, 16, 3)).toBe("plain");
-  });
-
-  test("state colors follow delivery state", () => {
-    expect(styleAt(draw(logState(message(1, { status: "failed" }))), 10, 3)).toBe("bad");
-    expect(styleAt(draw(logState(message(1, { status: "read" }))), 10, 3)).toBe("ok");
-    expect(styleAt(draw(logState(message(1, { status: "delivered" }))), 10, 3)).toBe("ok");
-  });
-
-  test("scroll.detail moves through a long body", () => {
-    const body = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
-    const g = draw(logState(message(1, { body }), { scroll: { agents: 0, log: 0, detail: 7 } }));
-    expect(g.text(1).trimEnd()).toBe("line 2");
-    expect(g.text(11).trimEnd()).toBe("line 12");
-  });
-
-  test("nothing selected: one dim line", () => {
-    const g = draw(state({ view: "log" }));
-    expect(g.text(1).trimEnd()).toBe(EMPTY.nothingSelected);
-    expect(styleAt(g, 0, 1)).toBe("dim");
   });
 });

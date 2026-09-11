@@ -2,17 +2,24 @@ import { visibleAgents } from "../filter.ts";
 import { bodyRows, TITLE_ROWS } from "../layout.ts";
 import type { Grid, Rect } from "../screen.ts";
 import type { Agent, State } from "../state.ts";
-import type { Style } from "../style.ts";
+import { hostStyle, type Style } from "../style.ts";
 import { age, fitRight, truncate, width } from "../text.ts";
 import { drawEmpty, EMPTY, REGISTER_HINT } from "./empty.ts";
 
 /**
- * The roster: one row per agent (name, host, reachability, status, age of last
- * seen), the cursor row inverse, sorted and filtered by `filter.ts`. Columns
- * are sized for the rows on screen; when the pane is narrow the least useful
- * columns go first (age, then status, then host) and the name keeps the rest.
+ * The roster: one row per agent (a mark when it is pending, then name, host,
+ * reachability, status, age of last seen), the cursor row inverse, sorted and
+ * filtered by `filter.ts`. A name and its host tag share the host's hue, so the
+ * color says where an agent runs and the tag is its legend; the mark is accent.
+ * Columns are sized from the whole visible list, so
+ * scrolling never shifts one; when the pane is narrow the least useful columns
+ * go first (age, then status, then host) and the name keeps the rest.
  */
 
+/** The pending mark: one cell at the row's left, blank on unmarked rows. */
+export const PENDING_MARK = "●";
+/** The mark and the space after it; every row reserves them so names line up. */
+const MARK_COLS = 2;
 /** Cells between two columns. */
 const GAP_COLS = 2;
 /** "999d" is the widest age `text.age` produces. */
@@ -29,11 +36,12 @@ const REACH_NOTE_MAX_COLS = 24;
 /** Names keep at least this much before a note may take the rest. */
 const NAME_ROOMY_COLS = 24;
 
+const TITLE = "agents";
 const REACHABLE = "up";
 const UNREACHABLE = "down";
 
 /** Column widths in cells; 0 means the column is not drawn. */
-interface Columns {
+export interface Columns {
   name: number;
   host: number;
   reach: number;
@@ -51,7 +59,9 @@ function reachText(agent: Agent, cols: number): string {
   return note !== "" && cols > REACH_COLS ? `${UNREACHABLE} ${note}` : UNREACHABLE;
 }
 
+/** Cells everything but the name takes: the mark, and each drawn column with its gap. */
 const used = (c: Columns): number =>
+  MARK_COLS +
   [c.host, c.reach, c.status, c.age].reduce((sum, w) => (w > 0 ? sum + w + GAP_COLS : sum), 0);
 
 /** Widths for `rows` in a pane `w` cells wide; the name column takes what is left. */
@@ -79,33 +89,30 @@ export function columns(w: number, rows: Agent[]): Columns {
   return c;
 }
 
-/** Pane title with the "12 of 43" count at the right edge while a filter narrows the list. */
-function drawTitle(state: State, rect: Rect, grid: Grid, shown: number): void {
-  const title = "agents";
-  grid.put(rect.x, rect.y, title, state.focus === "list" ? "title" : "plain", rect.w);
-  if (state.filter === "") return;
-  const count = `${shown} of ${state.agents.length}`;
-  const x = rect.x + rect.w - width(count);
-  if (x >= rect.x + width(title) + GAP_COLS) grid.put(x, rect.y, count, "dim");
+/** Pane title, plain: no pane has focus. The filter count lives in the tab row, not here. */
+function drawTitle(rect: Rect, grid: Grid): void {
+  grid.put(rect.x, rect.y, TITLE, "plain", rect.w);
 }
 
-function drawRow(
-  agent: Agent,
-  y: number,
-  rect: Rect,
-  c: Columns,
-  now: number,
-  grid: Grid,
-  selected: boolean,
-): void {
+interface Row {
+  agent: Agent;
+  y: number;
+  pending: boolean;
+  selected: boolean;
+}
+
+function drawRow(row: Row, rect: Rect, c: Columns, now: number, roster: Agent[], grid: Grid): void {
+  const { agent, y, selected } = row;
   // The cursor row is inverse video and nothing else, so every cell shares one style.
   const style = (role: Style): Style => (selected ? "selected" : role);
   if (selected) grid.fill({ x: rect.x, y, w: rect.w, h: 1 }, "selected");
   let x = rect.x;
-  grid.put(x, y, truncate(agent.name, c.name), style("plain"), c.name);
+  if (row.pending) grid.put(x, y, PENDING_MARK, style("accent"), 1);
+  x += MARK_COLS;
+  grid.put(x, y, truncate(agent.name, c.name), style(hostStyle(roster, agent.host)), c.name);
   x += c.name + GAP_COLS;
   if (c.host > 0) {
-    grid.put(x, y, truncate(agent.host, c.host), style("plain"), c.host);
+    grid.put(x, y, truncate(agent.host, c.host), style(hostStyle(roster, agent.host)), c.host);
     x += c.host + GAP_COLS;
   }
   grid.put(
@@ -124,9 +131,11 @@ function drawRow(
 }
 
 export function drawAgents(state: State, rect: Rect, grid: Grid): void {
+  if (rect.h <= 0 || rect.w <= 0) return;
   const agents = visibleAgents(state);
-  drawTitle(state, rect, grid, agents.length);
+  drawTitle(rect, grid);
   const body: Rect = { x: rect.x, y: rect.y + TITLE_ROWS, w: rect.w, h: rect.h - TITLE_ROWS };
+  if (body.h <= 0) return;
   if (state.agents.length === 0) {
     // An empty list is only a fact about the bus once a poll has succeeded.
     if (state.lastPollAt === undefined) drawEmpty(body, grid, EMPTY.noData);
@@ -139,8 +148,15 @@ export function drawAgents(state: State, rect: Rect, grid: Grid): void {
   }
   // Widths come from the whole list, not the page, so scrolling never shifts a column.
   const c = columns(rect.w, agents);
+  const pending = new Set(state.pending);
   const first = state.scroll.agents;
   agents.slice(first, first + bodyRows(rect)).forEach((agent, i) => {
-    drawRow(agent, body.y + i, rect, c, state.now, grid, agent.id === state.selectedAgentId);
+    const row: Row = {
+      agent,
+      y: body.y + i,
+      pending: pending.has(agent.id),
+      selected: agent.id === state.selectedAgentId,
+    };
+    drawRow(row, rect, c, state.now, state.agents, grid);
   });
 }

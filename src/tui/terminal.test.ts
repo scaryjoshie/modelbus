@@ -134,6 +134,19 @@ describe("openTerminal", () => {
     expect(f.exits).toEqual([code]);
   });
 
+  test("a hangup whose terminal is already gone still leaves raw mode and exits with the signal code", () => {
+    const f = fakeIo();
+    openTerminal(f.io);
+    f.io.out.write = () => {
+      throw new Error("EIO");
+    };
+    f.fire("SIGHUP");
+    expect(f.raw).toEqual([true, false]);
+    expect(f.flow).toEqual(["resume", "pause"]);
+    expect(f.exits).toEqual([129]);
+    expect(f.listeners.get("SIGHUP")).toHaveLength(0);
+  });
+
   test.each(["uncaughtException", "unhandledRejection"])(
     "%s restores first, then reports the error, then exits 1",
     (event) => {

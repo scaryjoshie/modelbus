@@ -1,26 +1,25 @@
 import type { State } from "./state.ts";
 
 /**
- * Every key the TUI answers to, in one table. `update` dispatches from it, the
- * status row shows the entries marked `hint`, and the help overlay lists all of
- * it, so the documentation cannot drift from the behavior.
+ * Every key the TUI answers to outside a prompt, in one table. `update`
+ * dispatches from it, the status row shows the entries marked `hint`, and the
+ * help overlay lists all of it, so the documentation cannot drift from the
+ * behavior. Inside a prompt the keyboard is text; see `onPromptKey` in state.ts.
+ * Enter changes nothing on screen but which pane the arrows move.
  */
 
 export type Action =
   | "quit"
   | "back"
   | "help"
-  | "viewAgents"
-  | "viewLog"
-  | "up"
-  | "down"
-  | "pageUp"
-  | "pageDown"
-  | "top"
-  | "bottom"
-  | "open"
-  | "focusNext"
-  | "filter";
+  | "switchTab"
+  /** Up or down; the key that fired it says which. */
+  | "move"
+  | "filter"
+  | "mark"
+  | "connect"
+  | "focusMessages"
+  | "rename";
 
 export interface Binding {
   /** Key ids as `keyId` spells them; the first is the one shown in hints. */
@@ -33,26 +32,23 @@ export interface Binding {
   hint?: boolean;
 }
 
-const listFocused = (s: State) => s.focus === "list" && !s.help;
 const noOverlay = (s: State) => !s.help;
+const agentsTab = (s: State) => s.tab === "agents" && !s.help;
+const chatsTab = (s: State) => s.tab === "chats" && !s.help;
+const chatsList = (s: State) => chatsTab(s) && s.focus === "list";
 
 export const BINDINGS: readonly Binding[] = [
-  { keys: ["q"], action: "quit", help: "quit", when: listFocused, hint: true },
-  { keys: ["q"], action: "back", help: "close", when: (s) => s.help || s.focus === "detail" },
-  { keys: ["ctrl+c"], action: "quit", help: "quit from anywhere" },
+  { keys: ["tab"], action: "switchTab", help: "switch tab", when: noOverlay, hint: true },
+  { keys: ["up", "down"], action: "move", help: "move", when: noOverlay, hint: true },
+  { keys: ["f"], action: "filter", help: "filter", when: noOverlay, hint: true },
+  { keys: ["c"], action: "mark", help: "mark pending", when: agentsTab, hint: true },
+  { keys: ["enter"], action: "connect", help: "connect pending", when: agentsTab, hint: true },
+  { keys: ["enter"], action: "focusMessages", help: "read messages", when: chatsList, hint: true },
+  { keys: ["r"], action: "rename", help: "rename", when: agentsTab, hint: true },
   { keys: ["escape"], action: "back", help: "back out one level" },
   { keys: ["?"], action: "help", help: "help", hint: true },
-  { keys: ["1"], action: "viewAgents", help: "agents", when: noOverlay, hint: true },
-  { keys: ["2"], action: "viewLog", help: "log", when: noOverlay, hint: true },
-  { keys: ["j", "down"], action: "down", help: "down", when: noOverlay, hint: true },
-  { keys: ["k", "up"], action: "up", help: "move up", when: noOverlay },
-  { keys: ["pagedown", "ctrl+d"], action: "pageDown", help: "page down", when: noOverlay },
-  { keys: ["pageup", "ctrl+u"], action: "pageUp", help: "page up", when: noOverlay },
-  { keys: ["g", "home"], action: "top", help: "first row", when: noOverlay },
-  { keys: ["G", "end"], action: "bottom", help: "last row", when: noOverlay },
-  { keys: ["enter"], action: "open", help: "open", when: listFocused, hint: true },
-  { keys: ["tab"], action: "focusNext", help: "pane", when: noOverlay, hint: true },
-  { keys: ["/"], action: "filter", help: "filter", when: noOverlay, hint: true },
+  { keys: ["q"], action: "quit", help: "quit", hint: true },
+  { keys: ["ctrl+c"], action: "quit", help: "quit from anywhere" },
 ];
 
 /** Bindings that apply in this state, in table order. */
@@ -78,13 +74,9 @@ const GLYPHS: Record<string, string> = {
   enter: "⏎",
   escape: "esc",
   tab: "tab",
-  pageup: "pgup",
-  pagedown: "pgdn",
-  home: "home",
-  end: "end",
 };
 
-/** "j/↓" for a binding, the way the status row and help overlay show it. */
+/** "↑/↓" for a binding, the way the status row and help overlay show it. */
 export function label(b: Binding): string {
   return b.keys.map((k) => k.replace(/[a-z]+$/, (name) => GLYPHS[name] ?? name)).join("/");
 }

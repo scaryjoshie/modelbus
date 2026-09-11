@@ -1,68 +1,87 @@
 import { hints, label } from "../bindings.ts";
-import { visibleAgents, visibleMessages } from "../filter.ts";
 import type { Grid, Rect } from "../screen.ts";
 import type { State } from "../state.ts";
 import { clock, truncate, width } from "../text.ts";
+import type { Span } from "./spans.ts";
 
 /**
- * The bottom row. Left: key hints for the current focus, or the last error in
- * `bad` when the daemon could not be reached (the message carries the socket
- * path). Right: "12 of 43" under a filter and the time of the last good poll.
- * While the filter box has focus the row is the prompt with the count.
+ * The bottom row. Left: key hints for the active tab, dropped whole from the
+ * right when they do not fit; or, in `bad`, the last action's failure (until
+ * the next key) or else the last poll's error (until the next good poll). The
+ * error carries the socket path, so it stays on screen whole when it fits.
+ * Right: "N pending" in `accent` while agents are marked, then the time of
+ * the last good poll in `dim`. The filter count lives in the tab bar, not
+ * here. A prompt takes this row instead; `view.ts` chooses, and
+ * `views/prompt.ts` draws it.
  */
 
-/** Cells between the left and right halves, and between hints. */
+/** Cells between the left and right halves, between hints, and between the right-hand parts. */
 const GAP = "  ";
-/** Drawn after the filter text so the prompt reads as a place to type. */
-const CARET = "▏";
 
-/** "12 of 43" for the view on screen; only while a filter narrows it or is being typed. */
-function count(state: State): string | undefined {
-  if (state.filter === "" && state.focus !== "filter") return undefined;
-  const shown = state.view === "agents" ? visibleAgents(state) : visibleMessages(state);
-  const total = state.view === "agents" ? state.agents : state.messages;
-  return `${shown.length} of ${total.length}`;
+/** "2 pending" while agents are marked; the mark is an Agents-tab notion, so only there. */
+function pending(state: State): Span | undefined {
+  if (state.tab !== "agents" || state.pending.length === 0) return undefined;
+  return { text: `${state.pending.length} pending`, style: "accent" };
 }
 
-/** The right half, ready to draw: count and clock, or empty. */
-function rightText(state: State): string {
-  const parts = [
-    count(state),
-    state.lastPollAt === undefined ? undefined : clock(state.lastPollAt),
-  ];
-  return parts.filter((p) => p !== undefined).join(GAP);
+function lastPoll(state: State): Span | undefined {
+  if (state.lastPollAt === undefined) return undefined;
+  return { text: clock(state.lastPollAt), style: "dim" };
 }
 
-/** Draw hints left to right, whole ones only, until the next would not fit. */
+/** The right half: pending count and clock, gaps between, or nothing. */
+function rightSpans(state: State): Span[] {
+  const parts = [pending(state), lastPoll(state)].filter((p) => p !== undefined);
+  return parts.flatMap((p, i) => (i === 0 ? [p] : [{ text: GAP, style: "plain" }, p]));
+}
+
+/** How many hints at the end of the list are kept when room runs out: help and quit. */
+const KEPT_TAIL_HINTS = 2;
+
+/**
+ * Draw hints left to right, whole ones only. When they do not all fit, the
+ * middle ones go first: the last two (help and quit) are the ones a lost
+ * reader needs, so room is reserved for them before the rest are placed.
+ */
 function drawHints(state: State, rect: Rect, grid: Grid, maxWidth: number): void {
+  const all = hints(state);
+  const cost = (b: (typeof all)[number], first: boolean) =>
+    (first ? 0 : width(GAP)) + width(label(b)) + 1 + width(b.help);
+  const tail = all.slice(-KEPT_TAIL_HINTS);
+  const head = all.slice(0, Math.max(0, all.length - KEPT_TAIL_HINTS));
+  const tailWidth = tail.reduce((w, b) => w + cost(b, false), 0);
   let x = rect.x;
   const limit = rect.x + maxWidth;
-  for (const b of hints(state)) {
-    const key = label(b);
-    const needed = (x === rect.x ? 0 : width(GAP)) + width(key) + 1 + width(b.help);
-    if (x + needed > limit) break;
+  const draw = (b: (typeof all)[number]) => {
     if (x !== rect.x) x += grid.put(x, rect.y, GAP, "plain");
-    x += grid.put(x, rect.y, key, "plain");
+    x += grid.put(x, rect.y, label(b), "plain");
     x += grid.put(x, rect.y, " ", "plain");
     x += grid.put(x, rect.y, b.help, "dim");
+  };
+  for (const b of head) {
+    if (x + cost(b, x === rect.x) + tailWidth > limit) break;
+    draw(b);
+  }
+  for (const b of tail) {
+    if (x + cost(b, x === rect.x) > limit) break;
+    draw(b);
   }
 }
 
 export function drawStatus(state: State, rect: Rect, grid: Grid): void {
   if (rect.h <= 0 || rect.w <= 0) return;
   grid.fill(rect);
-  const right = rightText(state);
-  const rightW = width(right);
-  if (rightW > 0) grid.put(rect.x + rect.w - rightW, rect.y, right, "dim", rightW);
+  const right = rightSpans(state);
+  const rightW = right.reduce((w, s) => w + width(s.text), 0);
+  let x = rect.x + rect.w - rightW;
+  for (const s of right) x += grid.put(x, rect.y, s.text, s.style, rect.x + rect.w - x);
   // The left half stops a gap short of the right half, or takes the row when there is none.
   const leftW = Math.max(0, rect.w - (rightW > 0 ? rightW + width(GAP) : 0));
 
-  if (state.focus === "filter") {
-    grid.put(rect.x, rect.y, truncate(`/${state.filter}${CARET}`, leftW), "plain", leftW);
-    return;
-  }
-  if (state.error !== undefined) {
-    grid.put(rect.x, rect.y, truncate(state.error, leftW), "bad", leftW);
+  // A failed action answers the key just pressed, so it wins over a standing poll error.
+  const problem = state.notice ?? state.error;
+  if (problem !== undefined) {
+    grid.put(rect.x, rect.y, truncate(problem, leftW), "bad", leftW);
     return;
   }
   drawHints(state, rect, grid, leftW);

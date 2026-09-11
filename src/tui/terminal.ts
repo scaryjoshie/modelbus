@@ -97,7 +97,11 @@ export function openTerminal(io: TerminalIo = processIo()): Terminal {
     if (restored) return;
     restored = true;
     if (resizeTimer !== undefined) clearTimeout(resizeTimer);
-    out.write(`${SGR_RESET}${CURSOR_SHOW}${ALT_SCREEN_OFF}`);
+    // After a hangup the terminal may be gone; a failed write must not stop the
+    // rest of the cleanup or turn a signal exit into a crash.
+    try {
+      out.write(`${SGR_RESET}${CURSOR_SHOW}${ALT_SCREEN_OFF}`);
+    } catch {}
     if (inp.isTTY) inp.setRawMode?.(false);
     inp.pause();
     // Our job is done; let later errors and signals behave as they normally would.

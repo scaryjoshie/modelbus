@@ -29,72 +29,63 @@ const draw = (state: State, w = COLS) => {
 const styleAt = (g: Grid, x: number) => g.cells[0]?.[x]?.style;
 
 describe("drawStatus", () => {
-  test("hints for the list: key plain, label dim, two spaces between", () => {
+  test("hints for the tab: key plain, label dim, two spaces between", () => {
     const g = draw(base());
     const text = g.text(0);
-    expect(text.startsWith("q quit  ? help  1 agents  2 log  j/↓ down")).toBe(true);
+    expect(text.startsWith("tab switch tab  ↑/↓ move  f filter  c mark pending")).toBe(true);
     expect(styleAt(g, 0)).toBe("plain");
-    expect(styleAt(g, 2)).toBe("dim");
-    expect(styleAt(g, 6)).toBe("plain");
+    expect(styleAt(g, 4)).toBe("dim");
+    expect(styleAt(g, 16)).toBe("plain");
   });
 
-  test("hints follow the focus: no quit while the detail pane has focus", () => {
-    const text = draw(base({ focus: "detail" })).text(0);
-    expect(text.startsWith("? help")).toBe(true);
-    expect(text).not.toContain("q quit");
+  test("hints follow the tab: no marks or renames on the Chats tab", () => {
+    const text = draw(base({ tab: "chats" })).text(0);
+    expect(text).toContain("⏎ read messages");
+    expect(text).not.toContain("rename");
+    expect(text).not.toContain("pending");
   });
 
-  test("hints are dropped whole when the row is too narrow", () => {
-    const text = draw(base(), 15).text(0).trimEnd();
-    expect(text).toBe("q quit  ? help");
+  test("when hints do not fit, the middle ones go and help and quit stay", () => {
+    expect(draw(base(), 14).text(0).trimEnd()).toBe("? help  q quit");
+    expect(draw(base(), 30).text(0).trimEnd()).toBe("tab switch tab  ? help  q quit");
+    expect(draw(base(), 6).text(0).trimEnd()).toBe("? help");
   });
 
-  test("the last good poll shows as a clock on the right", () => {
+  test("marked agents show as an accent count before the clock", () => {
+    const g = draw(base({ pending: ["alpha", "beta"], lastPollAt: 0 }));
+    const text = g.text(0);
+    expect(text.endsWith(`2 pending  ${clock(0)}`)).toBe(true);
+    const at = text.indexOf("2 pending");
+    expect(styleAt(g, at)).toBe("accent");
+    expect(styleAt(g, at + "2 pending".length - 1)).toBe("accent");
+    expect(styleAt(g, COLS - 1)).toBe("dim");
+    // The hint words say "pending" too; it is the count that must be absent.
+    expect(draw(base({ pending: ["alpha"], tab: "chats" })).text(0)).not.toMatch(/\d+ pending/);
+    expect(draw(base()).text(0)).not.toMatch(/\d+ pending/);
+  });
+
+  test("the last good poll shows as a dim clock at the right edge", () => {
     const at = Date.UTC(2026, 8, 10, 12, 34, 56);
     const g = draw(base({ lastPollAt: at }));
     expect(g.text(0).endsWith(clock(at))).toBe(true);
     expect(styleAt(g, COLS - 1)).toBe("dim");
-    expect(draw(base()).text(0).trimEnd().endsWith("/ filter")).toBe(true);
+    expect(draw(base()).text(0).trimEnd().endsWith("q quit")).toBe(true);
   });
 
-  test("a filter adds the count for the current view", () => {
-    expect(
-      draw(base({ filter: "a" }))
-        .text(0)
-        .endsWith("3 of 3"),
-    ).toBe(true);
-    expect(
-      draw(base({ filter: "et" }))
-        .text(0)
-        .endsWith("1 of 3"),
-    ).toBe(true);
-    expect(
-      draw(base({ filter: "zz", view: "log" }))
-        .text(0)
-        .endsWith("0 of 0"),
-    ).toBe(true);
-    expect(draw(base()).text(0)).not.toContain(" of ");
+  test("the filter count lives in the tab bar, not here", () => {
+    expect(draw(base({ filter: "et", lastPollAt: 0 })).text(0)).not.toContain(" of ");
+    expect(draw(base({ filter: "et", lastPollAt: 0 })).text(0)).not.toContain("1/3");
   });
 
-  test("the filter box takes the row as a prompt with the count", () => {
-    const g = draw(base({ focus: "filter", filter: "be", lastPollAt: 0 }));
-    const text = g.text(0);
-    expect(text.startsWith("/be▏")).toBe(true);
-    expect(text).not.toContain("quit");
-    expect(text.trimEnd().endsWith(`1 of 3  ${clock(0)}`)).toBe(true);
-    expect(
-      draw(base({ focus: "filter" }))
-        .text(0)
-        .startsWith("/▏"),
-    ).toBe(true);
-    expect(
-      draw(base({ focus: "filter" }))
-        .text(0)
-        .endsWith("3 of 3"),
-    ).toBe(true);
+  test("a failed action replaces the hints in bad and keeps the right half", () => {
+    const g = draw(base({ notice: 'name "beta" is taken', lastPollAt: 0 }));
+    expect(g.text(0).startsWith('name "beta" is taken')).toBe(true);
+    expect(styleAt(g, 0)).toBe("bad");
+    expect(g.text(0)).not.toContain("quit");
+    expect(g.text(0).endsWith(clock(0))).toBe(true);
   });
 
-  test("an error replaces the hints in bad and keeps the socket path", () => {
+  test("a poll error replaces the hints in bad and keeps the socket path", () => {
     const error = "modelbus is not running (/tmp/mb/daemon.sock); start it with: modelbus start";
     const g = draw(base({ error, lastPollAt: 0 }));
     expect(g.text(0).startsWith(error)).toBe(true);
@@ -102,6 +93,12 @@ describe("drawStatus", () => {
     expect(g.text(0).endsWith(clock(0))).toBe(true);
     expect(styleAt(g, 0)).toBe("bad");
     expect(g.text(0)).not.toContain("quit");
+  });
+
+  test("a failed action wins over a standing poll error", () => {
+    const g = draw(base({ error: "daemon gone", notice: "rename failed" }));
+    expect(g.text(0).startsWith("rename failed")).toBe(true);
+    expect(g.text(0)).not.toContain("daemon gone");
   });
 
   test("a long error is truncated short of the clock", () => {
