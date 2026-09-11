@@ -78,13 +78,18 @@ function agentLines(state: State, agent: Agent, w: number): Line[] {
   if (agent.note) reachable.push({ text: `  ${agent.note}`, style: "plain" });
   const lines: Line[] = [
     field("name", [{ text: agent.name, style: providerStyle(state.agents, agent.provider) }]),
+  ];
+  if (!agent.registered) {
+    lines.push(field("registered", [{ text: "no: not on the bus yet", style: "bad" }]));
+  }
+  lines.push(
     field("id", plain(agent.id)),
     field("provider", [
       { text: agent.provider, style: providerStyle(state.agents, agent.provider) },
     ]),
     field("reachable", reachable),
     field("status", plain(agent.status ?? "")),
-  ];
+  );
   if (agent.purpose) lines.push(field("purpose", plain(agent.purpose)));
   if (agent.title) lines.push(field("title", plain(agent.title)));
   lines.push(field("dir", plain(shortenHome(agent.cwd))));

@@ -45,10 +45,14 @@ describe("web door", () => {
     const a = await chat(web.url);
     const b = await chat(web.url);
     const tools = (await a.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["join", "send", "status", "sync", "who"]);
+    expect(tools).toEqual(["register", "send", "status", "sync", "who"]);
 
-    const joinA = textOf(await a.callTool({ name: "join", arguments: { name: "planner" } }));
-    const joinB = textOf(await b.callTool({ name: "join", arguments: { name: "reviewer" } }));
+    const joinA = textOf(
+      await a.callTool({ name: "register", arguments: { name: "planner", purpose: "plans" } }),
+    );
+    const joinB = textOf(
+      await b.callTool({ name: "register", arguments: { name: "reviewer", purpose: "reviews" } }),
+    );
     const idA = joinA.match(/your id is (\S+)/)?.[1];
     const idB = joinB.match(/your id is (\S+)/)?.[1];
     if (!idA || !idB) throw new Error(`join did not return ids: ${joinA} / ${joinB}`);
@@ -74,6 +78,6 @@ describe("web door", () => {
       arguments: { as: "nope", to: "reviewer", body: "x" },
     });
     expect(bad.isError).toBe(true);
-    expect(textOf(bad)).toContain("call join first");
+    expect(textOf(bad)).toContain("call register first");
   });
 });

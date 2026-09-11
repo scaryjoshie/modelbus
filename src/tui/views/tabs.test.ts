@@ -9,6 +9,7 @@ const agent = (name: string): Agent => ({
   provider: "h",
   lastSeen: 0,
   purpose: null,
+  registered: true,
   reachable: true,
 });
 

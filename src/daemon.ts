@@ -56,16 +56,23 @@ const authed = <S extends z.ZodType, R>(m: {
   handler(params: z.infer<S>, agentId: string): R | Promise<R>;
 }) => ({ ...m, identity: true as const });
 
-/** A method anyone may call, that behaves differently for an identified caller. */
+/**
+ * A method anyone may call, that behaves differently for an identified caller.
+ * Gets the agent id when the caller has registered, and the identity itself.
+ */
 const scoped = <S extends z.ZodType, R>(m: {
   params: S;
-  handler(params: z.infer<S>, agentId: string | undefined): R | Promise<R>;
+  handler(
+    params: z.infer<S>,
+    agentId: string | undefined,
+    identity: Identity | undefined,
+  ): R | Promise<R>;
 }) => ({ ...m, identity: "optional" as const });
 
 interface AnyMethod {
   params: z.ZodType;
   identity: boolean | "optional";
-  handler(params: unknown, agentId?: string): unknown;
+  handler(params: unknown, agentId?: string, identity?: Identity): unknown;
 }
 
 /** A conversation as a person or an agent spells it: `#group`, or `a,b` for a DM. */
@@ -78,6 +85,22 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     if (!agent) throw new ApiError(`no agent named "${name}"; try who`);
     return agent;
   };
+  /**
+   * Naming a candidate as a recipient or a group member registers it: being
+   * put in a chat is one of the ways onto the bus. Reads never do this.
+   */
+  const agentNamedOrCandidate = (name: string): Agent => {
+    const agent = store.agentByName(name);
+    if (agent) return agent;
+    const c = providerManager.candidateNamed(name);
+    if (c) return providerManager.register({ provider: c.provider, key: c.key, name: c.name });
+    throw new ApiError(`no agent named "${name}"; try who`);
+  };
+  /** What a newly registered agent is told: where it is and what is waiting. */
+  const briefing = async (agentId: string) => ({
+    groups: store.groupsOf(agentId),
+    unread: (await api.pull({ agentId })).items,
+  });
   const groupNamed = (spec: string): Conversation => {
     const group = store.groupByName(spec.replace(/^#/, ""));
     if (!group) throw new ApiError(`no group named "${spec}"; try chats`);
@@ -86,7 +109,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
   /** Where a send from `from` addressed `to` goes: a group by #name, else the DM with that agent. */
   const conversationFor = (from: Agent, to: string): Conversation => {
     if (to.startsWith("#")) return groupNamed(to);
-    const other = agentNamed(to);
+    const other = agentNamedOrCandidate(to);
     if (other.id === from.id) throw new ApiError("cannot send to yourself");
     return store.dm(from.id, other.id);
   };
@@ -104,23 +127,56 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       params: z.object({}),
       handler: (_p, id) => ({ agent: store.agentById(id) as Agent }),
     }),
-    attach: authed({
+    /** A session hands over what delivery into it needs; it need not have registered yet. */
+    attach: scoped({
       params: z.record(z.string(), z.unknown()),
-      handler: (p, id) => {
-        const agent = store.agentById(id) as Agent;
-        return { agent, attached: providerManager.attach(agent, p) };
+      handler: (p, id, identity) => {
+        const attached = identity?.kind === "self" ? providerManager.attach(identity, p) : false;
+        return { attached, agent: id ? store.agentById(id) : undefined };
       },
     }),
-    register: open({
-      params: z.object({ name: z.string().min(1), purpose: z.string().max(200).optional() }),
-      handler: (p) => {
+    /**
+     * The one door into core. A session registers itself (identity present); a
+     * person registers a candidate by name; a process registers with a name
+     * and gets a token. Purpose is stated here.
+     */
+    register: scoped({
+      params: z.object({
+        name: z.string().min(1).optional(),
+        purpose: z.string().max(200).optional(),
+        /** A label for a process with no provider; `web` for the web door. */
+        provider: z.string().min(1).max(40).optional(),
+      }),
+      handler: async (p, id, identity) => {
+        if (identity?.kind === "self") {
+          const agent = providerManager.register({
+            provider: identity.provider,
+            key: identity.key,
+            name: p.name ?? identity.name,
+          });
+          const described = p.purpose ? api.describe(agent.id, p.purpose) : agent;
+          return { agent: described, briefing: await briefing(agent.id) };
+        }
+        if (id) throw new ApiError("already registered");
+        if (!p.name) throw new ApiError("a name is needed to register");
+        if (store.agentByName(p.name)) throw new ApiError(`"${p.name}" is already registered`);
+        const candidate = providerManager.candidateNamed(p.name);
+        if (candidate) {
+          const agent = providerManager.register(candidate);
+          const described = p.purpose ? api.describe(agent.id, p.purpose) : agent;
+          return { agent: described, briefing: await briefing(agent.id) };
+        }
         // Identity (a fresh non-secret key) and the proof (a secret) are distinct.
         const secret = randomBytes(24).toString("base64url");
-        let agent = store.bind({ provider: UNSPECIFIED_PROVIDER, key: newId(), name: p.name });
+        let agent = store.bind({
+          provider: p.provider ?? UNSPECIFIED_PROVIDER,
+          key: newId(),
+          name: p.name,
+        });
         store.setCredential(agent.id, secret);
         if (p.purpose) agent = api.describe(agent.id, p.purpose);
         providerManager.touch(agent.id);
-        return { agent, token: `${agent.id}.${secret}` };
+        return { agent, token: `${agent.id}.${secret}`, briefing: await briefing(agent.id) };
       },
     }),
     send: authed({
@@ -155,7 +211,9 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
         api.pull({
           agentId: id,
           conversationId: p.scope
-            ? conversationFor(store.agentById(id) as Agent, p.scope).id
+            ? p.scope.startsWith("#")
+              ? groupNamed(p.scope).id
+              : store.dm(id, agentNamed(p.scope).id).id
             : undefined,
           wait: p.wait,
           limit: p.limit,
@@ -175,6 +233,16 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
         // from before it finished would be empty.
         await (p.fresh ? providerManager.reconcile() : providerManager.ready());
         let agents = providerManager.list(p.filter);
+        const f = p.filter?.toLowerCase();
+        const candidates = providerManager
+          .candidates()
+          .filter(
+            (c) =>
+              !f ||
+              [c.name, c.provider, c.cwd ?? "", c.title ?? ""].some((s) =>
+                s.toLowerCase().includes(f),
+              ),
+          );
         // An agent in groups sees its groups' members by default: the ones that matter.
         const scope = p.group
           ? new Set(store.participants(groupNamed(p.group).id))
@@ -182,7 +250,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
             ? store.groupmates(id)
             : undefined;
         if (scope) agents = agents.filter((a) => scope.has(a.id));
-        return { agents };
+        return { agents, candidates: scope ? [] : candidates };
       },
     }),
     log: open({
@@ -202,7 +270,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       handler: (p) => {
         const r = api.group({
           name: p.name.replace(/^#/, ""),
-          add: p.add?.map((n) => agentNamed(n).id),
+          add: p.add?.map((n) => agentNamedOrCandidate(n).id),
           remove: p.remove?.map((n) => agentNamed(n).id),
         });
         return {
@@ -274,7 +342,8 @@ export function createDaemon(
   if (opts.track !== false) providerManager.start();
   const methods: Record<string, AnyMethod> = buildMethods(store, api, providerManager);
 
-  function resolveIdentity(identity: Identity | undefined): string {
+  /** The agent a caller is, or undefined for a session that has not registered. */
+  function resolveIdentity(identity: Identity | undefined): string | undefined {
     if (!identity) throw new ApiError("identity required");
     if (identity.kind === "token") {
       const agent = store.agentById(identity.id);
@@ -283,7 +352,7 @@ export function createDaemon(
       providerManager.touch(agent.id);
       return agent.id;
     }
-    return providerManager.identify(identity).id;
+    return providerManager.agentFor(identity)?.id;
   }
 
   async function handle(req: Request): Promise<Response> {
@@ -304,7 +373,10 @@ export function createDaemon(
         m.identity === true || (m.identity === "optional" && env.identity)
           ? resolveIdentity(env.identity)
           : undefined;
-      return Response.json(await m.handler(params, agentId));
+      if (m.identity === true && agentId === undefined) {
+        throw new ApiError("not registered on modelbus; call register with your purpose");
+      }
+      return Response.json(await m.handler(params, agentId, env.identity));
     } catch (e) {
       const status = e instanceof ApiError ? 422 : e instanceof z.ZodError ? 400 : 500;
       return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status });

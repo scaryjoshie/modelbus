@@ -19,28 +19,66 @@ const text = (t: string, isError = false) => ({
   isError,
 });
 
+const NOT_REGISTERED =
+  "not registered on modelbus; call register with one line on what you are working on";
+
 export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   const { identity, label, attach } = await whoAmI();
   const client = createClient(identity);
   let me: string | undefined;
-  /** Bind once, and hand the daemon whatever our provider says it needs to reach this session. */
+  let attached = false;
+  /** Hand the daemon whatever our provider says it needs to reach this session, registered or not. */
+  const attachOnce = async () => {
+    if (attached || !attach) return;
+    await client.request("attach", attach);
+    attached = true;
+  };
+  /** The name we are registered under, learned once; throws while unregistered. */
   const bound = async (): Promise<string> => {
     if (me) return me;
+    await attachOnce().catch(() => undefined);
     me = (await client.request("bind", {})).agent.name;
-    if (attach) await client.request("attach", attach).catch(() => undefined);
     return me;
   };
   try {
     await bound();
   } catch (e) {
-    if (!(e instanceof DaemonUnreachable)) throw e;
-    process.stderr.write(`modelbus mcp: ${e.message}; tools will say so until it is\n`);
+    if (e instanceof DaemonUnreachable) {
+      process.stderr.write(`modelbus mcp: ${e.message}; tools will say so until it is\n`);
+    }
+    // Not registered yet: the instructions and the register tool handle that.
   }
 
   const server = new McpServer(
     { name: "modelbus", version: "0.0.0" },
     {
-      instructions: `You are "${me ?? label}" on modelbus, a message bus between the agents on this machine.`,
+      instructions: me
+        ? `You are "${me}" on modelbus, a message bus between the agents on this machine.`
+        : `You are not yet registered on modelbus, the message bus between the agents on this machine. Call the register tool with one line saying what you are working on; write "unspecified until further notice" if you do not know yet.`,
+    },
+  );
+
+  server.registerTool(
+    "register",
+    {
+      description:
+        "Register on the bus, stating in one line what you are working on. Returns your name, your groups, and any messages waiting for you.",
+      inputSchema: { purpose: z.string().min(1).max(200) },
+    },
+    async ({ purpose }) => {
+      try {
+        await attachOnce().catch(() => undefined);
+        const r = await client.request("register", { purpose });
+        me = r.agent.name;
+        const lines = [`registered as "${me}": ${r.agent.purpose ?? purpose}`];
+        for (const g of r.briefing.groups) lines.push(`in #${g.name} with ${g.members.join(", ")}`);
+        if (r.briefing.unread.length) {
+          lines.push(`${r.briefing.unread.length} waiting:`, ...r.briefing.unread.map(renderItem));
+        }
+        return text(lines.join("\n"));
+      } catch (e) {
+        return text(e instanceof Error ? e.message : String(e), true);
+      }
     },
   );
 
@@ -75,16 +113,17 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   server.registerTool(
     "who",
     {
-      description: "List the agents you share a group with, or everyone if you are in none.",
+      description:
+        "List the agents you share a group with, or everyone if you are in none. Each line: name, what it is for, provider.",
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {
       try {
-        const self = await bound();
+        const self = await bound().catch(() => undefined);
         const r = await client.request("who", { filter });
         const lines = r.agents
           .filter((a) => a.name !== self && (filter || a.reachable))
-          .map((a) => [a.name, a.provider, a.cwd ?? ""].filter(Boolean).join("  "));
+          .map((a) => [a.name, a.purpose ?? "", a.provider].filter(Boolean).join("  "));
         return text(lines.length ? lines.join("\n") : "nobody else is on the bus");
       } catch (e) {
         return text(e instanceof Error ? e.message : String(e), true);
@@ -118,7 +157,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   }
 
   process.stderr.write(
-    `modelbus mcp: ${me ? `bound as ${me}` : `identity ${label}, not yet bound`}\n`,
+    `modelbus mcp: ${me ? `registered as ${me}` : `${label}: ${NOT_REGISTERED}`}\n`,
   );
   await server.connect(new StdioServerTransport());
 }

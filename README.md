@@ -3,7 +3,7 @@
 A local message bus between coding-agent sessions. One daemon per user, TypeScript
 on Bun, SQLite for durable identities and messages.
 
-The current POC discovers Claude Code, Codex, and Aside sessions, delivers through
+modelbus discovers Claude Code, Codex, and Aside sessions, delivers through
 their native input mechanisms, and lets other processes join through registration.
 Agents use a small MCP tool surface to send messages and find peers. A process
 without a native delivery integration receives through `pull` / `sync`.
@@ -40,7 +40,7 @@ Everything under `~/.modelbus` is readable by its owner only.
 
 The runtime owns the provider contract. Discovery and communication are separate
 optional capabilities; observing a host does not itself register agents. The POC
-runtime still applies automatic binding during reconciliation. Explicit connection
+runtime lists discovered sessions as candidates until they register. Explicit connection
 UX, provider settings, web integrations, icons, and a shared artifact board are
 documented directions, not shipped features.
 

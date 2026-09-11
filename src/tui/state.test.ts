@@ -18,6 +18,7 @@ const agent = (id: string, provider = "h", extra: Partial<Agent> = {}): Agent =>
   provider,
   lastSeen: 0,
   purpose: null,
+  registered: true,
   reachable: true,
   ...extra,
 });

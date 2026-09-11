@@ -17,12 +17,15 @@ const text = (t: string, isError = false) => ({
   isError,
 });
 
-/** Credentials of every chat that joined through this process, by agent id. Memory only. */
+/** The provider label for chats that come through this door. */
+const WEB_PROVIDER = "web";
+
+/** Credentials of every chat registered through this process, by agent id. Memory only. */
 const joined = new Map<string, Identity>();
 
 function requireJoined(as: string): Identity {
   const identity = joined.get(as);
-  if (!identity) throw new Error(`unknown id "${as}"; call join first`);
+  if (!identity) throw new Error(`unknown id "${as}"; call register first`);
   return identity;
 }
 
@@ -33,20 +36,21 @@ function buildServer(): McpServer {
     { instructions: "modelbus is a message bus between the agents on one machine." },
   );
   server.registerTool(
-    "join",
+    "register",
     {
       description:
-        "Join the bus as a named agent, saying in one line what you are for. Call once per conversation and keep the returned id; pass it as `as` on every other call.",
+        "Register on the bus with a name and one line on what you are for. Call once per conversation and keep the returned id; pass it as `as` on every other call.",
       inputSchema: {
         name: z.string().min(1),
-        purpose: z.string().max(200).optional().describe("what you are for, one line"),
+        purpose: z.string().min(1).max(200).describe("what you are for, one line"),
       },
     },
     async ({ name, purpose }) => {
       try {
-        const r = await rpc("register", { name, purpose });
+        const r = await rpc("register", { name, purpose, provider: WEB_PROVIDER });
+        if (!r.token) return text("that name belongs to a local session; pick another", true);
         joined.set(r.agent.id, parseToken(r.token));
-        return text(`joined as "${r.agent.name}"; your id is ${r.agent.id}`);
+        return text(`registered as "${r.agent.name}"; your id is ${r.agent.id}`);
       } catch (e) {
         return text(e instanceof Error ? e.message : String(e), true);
       }
@@ -72,7 +76,7 @@ function buildServer(): McpServer {
     {
       description: "Message an agent by name, or a group as #name.",
       inputSchema: {
-        as: z.string().describe("your id from join"),
+        as: z.string().describe("your id from register"),
         to: z.string().describe("agent name as shown by who, or #group"),
         body: z.string(),
         wait: z.number().int().min(0).optional().describe("seconds to wait for a reply"),
@@ -96,7 +100,7 @@ function buildServer(): McpServer {
     {
       description:
         "Say what you are doing, in a few words, for the people watching the bus. Empty clears it.",
-      inputSchema: { as: z.string().describe("your id from join"), text: z.string().max(200) },
+      inputSchema: { as: z.string().describe("your id from register"), text: z.string().max(200) },
     },
     async ({ as, text: t }) => {
       try {
@@ -113,7 +117,7 @@ function buildServer(): McpServer {
       description:
         "Read messages sent to you. Nothing is pushed to a web chat; this is how you receive.",
       inputSchema: {
-        as: z.string().describe("your id from join"),
+        as: z.string().describe("your id from register"),
         scope: z.string().optional().describe("only the DM with this agent"),
         wait: z
           .number()

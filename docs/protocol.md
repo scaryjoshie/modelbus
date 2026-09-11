@@ -2,8 +2,10 @@
 
 modelbus detects Claude Code, Codex, and Aside sessions on its own. Anything else
 joins by registering with the runtime. No provider implementation or discovery is
-required. The current POC automatically binds discovered top-level host sessions;
-explicit connection workflows are discussed in `runtime-and-providers.md`.
+required. Discovered sessions (Claude Code, Codex, Aside) are candidates until they
+register: a session registers itself through the shim's `register` tool with one
+line on what it is working on, or a person registers it by name, or it is
+registered when first named as a recipient or group member.
 
 ## 1. Register
 
@@ -66,12 +68,12 @@ local POC protocol is not yet an authenticated cloud/provider-delegation protoco
 | method | params | identity | returns |
 |---|---|---|---|
 | `ping` | | no | `{ok, pid}` |
-| `register` | `{name, purpose?}` | no | `{agent, token}` |
+| `register` | `{name?, purpose?, provider?}`: with a self identity, registers the caller; else a candidate by name (no token), else a new process (token minted) | optional | `{agent, token?, briefing: {groups, unread}}` |
 | `bind` | | yes | `{agent}` |
-| `attach` | provider-specific runtime info | yes | `{agent, attached}` |
+| `attach` | provider-specific runtime info | optional: works before registration | `{attached, agent?}` |
 | `send` | `{to, body, wait?}`; `to` is an agent name or `#group` | yes | `{message, conversation, deliveries: [{to, status, detail?}], reply?}` |
 | `pull` | `{scope?, wait?, limit?}`; `scope` is an agent name or `#group` | yes | `{items, more, moreElsewhere}` |
-| `who` | `{filter?, fresh?, group?, all?}` | optional: a caller in groups sees groupmates unless `all` | `{agents: RosterEntry[]}` |
+| `who` | `{filter?, fresh?, group?, all?}` | optional: a caller in groups sees groupmates unless `all` | `{agents: RosterEntry[], candidates: Candidate[]}` |
 | `log` | `{conversation?}`: `#group` or `a,b` | no | `{rows}` |
 | `group` | `{name, add?, remove?}` | no | `{conversation, members}` |
 | `rename` | `{agent, name}` | no | `{agent}` |

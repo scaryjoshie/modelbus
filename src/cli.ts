@@ -151,21 +151,38 @@ const commands: Record<string, Command> = {
         { filter: positionals[0], fresh: values.fresh, group: values.group },
         identity,
       );
-      if (!r.agents.length) return console.log("nobody");
-      console.log(
-        table(
-          ["name", "purpose", "provider", "delivery", "status", "active", "cwd"],
-          r.agents.map((a) => [
-            a.name,
-            (a.purpose ?? "").slice(0, 40),
-            a.provider,
-            a.reachable ? (a.note ?? "reachable") : `no (${a.note ?? "?"})`,
-            a.status ?? "",
-            a.activeAt === undefined ? "" : age(a.activeAt),
-            shortCwd(a.cwd),
-          ]),
-        ),
-      );
+      if (!r.agents.length && !r.candidates.length) return console.log("nobody");
+      if (r.agents.length)
+        console.log(
+          table(
+            ["name", "purpose", "provider", "delivery", "status", "active", "cwd"],
+            r.agents.map((a) => [
+              a.name,
+              (a.purpose ?? "").slice(0, 40),
+              a.provider,
+              a.reachable ? (a.note ?? "reachable") : `no (${a.note ?? "?"})`,
+              a.status ?? "",
+              a.activeAt === undefined ? "" : age(a.activeAt),
+              shortCwd(a.cwd),
+            ]),
+          ),
+        );
+      if (r.candidates.length) {
+        console.log(`\nnot registered (${r.candidates.length}):`);
+        console.log(
+          table(
+            ["name", "title", "provider", "status", "active", "cwd"],
+            r.candidates.map((c) => [
+              c.name,
+              (c.title ?? "").slice(0, 40),
+              c.provider,
+              c.status ?? "",
+              c.activeAt === undefined ? "" : age(c.activeAt),
+              shortCwd(c.cwd),
+            ]),
+          ),
+        );
+      }
     },
   },
   log: {
@@ -288,7 +305,8 @@ const commands: Record<string, Command> = {
     },
   },
   register: {
-    usage: "register --name N [--purpose P]         join as any process; prints a token",
+    usage:
+      "register --name N [--purpose P]         register a candidate by name, or a new process (prints a token)",
     async run(args) {
       const { values } = parseArgs({
         args,
@@ -297,20 +315,26 @@ const commands: Record<string, Command> = {
       if (!values.name)
         throw new Error("usage: modelbus register --name <name> [--purpose <text>]");
       const r = await rpc("register", { name: values.name, purpose: values.purpose });
-      console.error(`registered as "${r.agent.name}"; use --token or MODELBUS_TOKEN`);
-      console.log(r.token);
+      if (r.token) {
+        console.error(`registered as "${r.agent.name}"; use --token or MODELBUS_TOKEN`);
+        console.log(r.token);
+      } else {
+        console.log(`registered "${r.agent.name}" (${r.agent.provider})`);
+      }
     },
   },
   attach: {
     usage:
-      "attach                                 bind the host session this runs inside; hand over its door",
+      "attach                                 hand the daemon this session's door; say whether it is registered",
     async run() {
       const me = await whoAmI();
-      const r = me.attach
-        ? await rpc("attach", me.attach, me.identity)
-        : { agent: (await rpc("bind", {}, me.identity)).agent, attached: false };
+      const r = await rpc("attach", me.attach ?? {}, me.identity);
       // As a SessionStart hook, stdout is added to the session's context.
-      console.log(`modelbus: this session is registered as "${r.agent.name}".`);
+      console.log(
+        r.agent
+          ? `modelbus: this session is registered as "${r.agent.name}".`
+          : "modelbus: this session is not registered. Use the modelbus register tool with one line on what you are working on.",
+      );
     },
   },
   mcp: {

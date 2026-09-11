@@ -27,6 +27,12 @@ All committed on main. `architecture.md` describes the result; this is the list.
   Agreed model for the person: not an agent, a sender who can type into chats
   they can see; not built yet. TUI v2 (tabs, `f`, `c` + Enter to connect, `r`)
   being built by an agent team against `docs/tui/plan.md`.
+- Explicit registration (2026-09-11): discovery makes candidates, registration
+  makes agents; every agent states a purpose; the shim has a `register` tool and
+  says so in its instructions; `who` returns candidates; reads never register.
+  Vocabulary: `provider` and `key` replace `host` and `hostKey`; `unspecified`
+  replaces `registered`. Agents also carry `status` (host's, or self-set) and
+  `activeAt`; the TUI shows purpose, status, active, and candidates dim.
 - CLAUDE.md gained a "How we work" section at Joshua's request. Read it first.
 
 Decided for the next passes: a secrets keeper inside the daemon (owner-only files,

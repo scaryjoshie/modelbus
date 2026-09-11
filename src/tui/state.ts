@@ -17,7 +17,11 @@ import { chatLines } from "./views/chat.ts";
  * carries an `Effect` and `index.ts` runs it and dispatches what comes back.
  */
 
-export type Agent = Result<"who">["agents"][number];
+/** A row of the roster: a registered agent, or a candidate the poller shaped like one. */
+export type Agent = Result<"who">["agents"][number] & {
+  /** False for a session a provider sees that has not registered; it is not on the bus yet. */
+  registered: boolean;
+};
 export type Message = Result<"log">["rows"][number];
 export type Conversation = Result<"conversations">["conversations"][number];
 export type ChatMessage = Result<"history">["items"][number];

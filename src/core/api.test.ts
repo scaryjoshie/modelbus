@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createClient, rpc } from "../client.ts";
 import { createDaemon } from "../daemon.ts";
 import { parseToken } from "../identity.ts";
+import type { Provider } from "../runtime/provider.ts";
 import { Api, ApiError } from "./api.ts";
 import { DEFAULT_LIMITS } from "./limits.ts";
 import { Store } from "./store.ts";
@@ -334,9 +335,11 @@ describe("protocol", () => {
     try {
       expect(statSync(unix).mode & 0o777).toBe(0o600); // the door is owner-only
       expect(statSync(join(dir, "d.db")).mode & 0o777).toBe(0o600); // so is the database
-      const app = await rpc("register", { name: "app" }, undefined, unix);
+      const app = await rpc("register", { name: "app", purpose: "tests" }, undefined, unix);
       const other = await rpc("register", { name: "other" }, undefined, unix);
       expect(app.agent.name).toBe("app");
+      expect(app.agent.purpose).toBe("tests");
+      if (!app.token || !other.token) throw new Error("a process registration mints a token");
       expect(app.token.length).toBeGreaterThan(8);
       const who = await rpc("who", {}, undefined, unix);
       expect(who.agents.map((a) => `${a.name}:${a.provider}`).sort()).toEqual([
@@ -378,7 +381,15 @@ describe("protocol", () => {
     let d = createDaemon({ store: new Store(path), unix, providers: [], track: false });
     const alice = { kind: "self", provider: "cli", key: "a", name: "alice" } as const;
     const bob = { kind: "self", provider: "cli", key: "b", name: "bob" } as const;
-    await rpc("bind", {}, bob, unix);
+    // An unregistered session can attach and look, but not send.
+    expect((await rpc("attach", {}, bob, unix)).agent).toBeUndefined();
+    await expect(rpc("send", { to: "bob", body: "x" }, alice, unix)).rejects.toThrow(
+      /not registered/,
+    );
+    const reg = await rpc("register", { purpose: "receives" }, bob, unix);
+    expect(reg.agent.name).toBe("bob");
+    expect(reg.briefing).toEqual({ groups: [], unread: [] });
+    await rpc("register", { purpose: "sends" }, alice, unix);
     const sent = await rpc("send", { to: "bob", body: "over the wire" }, alice, unix);
     expect(sent.deliveries[0]?.to.name).toBe("bob");
     expect(sent.deliveries[0]?.status).toBe("sent");
@@ -414,7 +425,9 @@ describe("protocol: groups over the wire", () => {
     });
     try {
       const id = (name: string) => ({ kind: "self", provider: "cli", key: name, name }) as const;
-      for (const n of ["alice", "bob", "carol", "dave"]) await rpc("bind", {}, id(n), unix);
+      for (const n of ["alice", "bob", "carol", "dave"]) {
+        await rpc("register", { purpose: n }, id(n), unix);
+      }
       const g = await rpc(
         "group",
         { name: "#backend", add: ["alice", "bob", "carol"] },
@@ -455,6 +468,83 @@ describe("protocol: groups over the wire", () => {
       const scoped = await rpc("pull", { scope: "#backend" }, id("bob"), unix);
       expect((await rpc("bind", {}, id("bob"), unix)).agent.name).toBe("reviewer");
       expect(scoped.items.map((m) => m.body)).toEqual(["hi team"]);
+    } finally {
+      d.stop();
+    }
+  });
+});
+
+describe("protocol: candidates", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "modelbus-cand-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("a seen session is a candidate; reads never register it, a send or a group does", async () => {
+    const unix = join(dir, "d.sock");
+    const seen = ["north", "south"];
+    const provider: Provider = {
+      name: "fake",
+      discovery: {
+        observe: async () =>
+          seen.map((n) => ({ key: `k-${n}`, name: n, relationship: "top-level", reachable: true })),
+      },
+      connector: { deliver: async () => ({ result: { status: "delivered" } }) },
+    };
+    const d = createDaemon({
+      store: new Store(join(dir, "d.db")),
+      unix,
+      providers: [provider],
+      track: false,
+    });
+    try {
+      await d.providerManager.reconcile();
+      const who = await rpc("who", {}, undefined, unix);
+      expect(who.agents).toEqual([]);
+      expect(who.candidates.map((c) => c.name).sort()).toEqual(["north", "south"]);
+
+      // reads do not register
+      await expect(
+        rpc("history", { conversation: "north,south" }, undefined, unix),
+      ).rejects.toThrow(/no agent named/);
+      await expect(
+        rpc("describe", { agent: "north", purpose: "x" }, undefined, unix),
+      ).rejects.toThrow(/no agent named/);
+      expect((await rpc("who", {}, undefined, unix)).agents).toEqual([]);
+
+      // a person registers one by name, with its purpose
+      const reg = await rpc(
+        "register",
+        { name: "north", purpose: "guards the north" },
+        undefined,
+        unix,
+      );
+      expect(reg.token).toBeUndefined(); // its provider holds the line; no token
+      expect(reg.agent.provider).toBe("fake");
+      expect(reg.agent.purpose).toBe("guards the north");
+      await expect(rpc("register", { name: "north" }, undefined, unix)).rejects.toThrow(
+        /already registered/,
+      );
+
+      // sending to the other one registers it on the way
+      const north = { kind: "self", provider: "fake", key: "k-north", name: "north" } as const;
+      const sent = await rpc("send", { to: "south", body: "hi" }, north, unix);
+      expect(sent.deliveries[0]?.to.name).toBe("south");
+      const after = await rpc("who", {}, undefined, unix);
+      expect(after.agents.map((a) => a.name).sort()).toEqual(["north", "south"]);
+      expect(after.candidates).toEqual([]);
+
+      // a session registering itself gets a briefing of where it is and what waits
+      seen.push("east");
+      await d.providerManager.reconcile();
+      await rpc("group", { name: "#compass", add: ["north", "east"] }, undefined, unix);
+      await rpc("send", { to: "#compass", body: "welcome" }, north, unix);
+      const east = { kind: "self", provider: "fake", key: "k-east", name: "east" } as const;
+      const brief = await rpc("register", { purpose: "faces east" }, east, unix);
+      expect(brief.agent.purpose).toBe("faces east");
+      expect(brief.briefing.groups).toEqual([{ name: "compass", members: ["north", "east"] }]);
+      expect(brief.briefing.unread.map((m) => m.body)).toEqual(["welcome"]);
     } finally {
       d.stop();
     }

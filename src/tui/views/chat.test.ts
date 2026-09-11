@@ -46,6 +46,7 @@ const agent = (name: string, provider: string): Agent => ({
   provider,
   lastSeen: NOW,
   purpose: null,
+  registered: true,
   reachable: true,
 });
 

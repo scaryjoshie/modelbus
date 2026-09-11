@@ -15,6 +15,7 @@ const agent = (id: string, extra: Partial<Agent> = {}): Agent => ({
   activeAt: NOW - 5000,
   lastSeen: NOW - 5000,
   purpose: null,
+  registered: true,
   reachable: true,
   ...extra,
 });

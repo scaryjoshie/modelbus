@@ -15,6 +15,7 @@ const agent = (name: string, provider: string, extra: Partial<Agent> = {}): Agen
   lastSeen: NOW - 5 * MINUTE_MS,
   activeAt: NOW - 5 * MINUTE_MS,
   purpose: null,
+  registered: true,
   reachable: true,
   ...extra,
 });
@@ -64,9 +65,9 @@ describe("drawAgents", () => {
   test("one row per agent in host-then-name order, under the title, after the mark column", () => {
     const { grid } = draw(stateWith(roster), 60, 6, 2, 1);
     expect(grid.text(1).trimEnd()).toBe("  agents");
-    expect(grid.text(2)).toMatch(/^ {4}writer\s+apex\s+up\s+5m$/);
-    expect(grid.text(3)).toMatch(/^ {4}planner\s+north-shell\s+up\s+idle\s+5m$/);
-    expect(grid.text(4)).toMatch(/^ {4}tester\s+zephyr\s+down\s+busy\s+now$/); // busy reads as now
+    expect(grid.text(2)).toMatch(/^ {4}writer\s+apex\s+5m$/);
+    expect(grid.text(3)).toMatch(/^ {4}planner\s+north-shell\s+idle\s+5m$/);
+    expect(grid.text(4)).toMatch(/^ {4}tester\s+zephyr\s+no window\s+now$/); // unreachable: the note; busy reads as now
     expect(grid.text(5).trim()).toBe("");
     // Every row fills the pane's width and none spills past it.
     for (const y of [2, 3, 4]) expect(grid.text(y).length).toBe(62);
@@ -95,10 +96,10 @@ describe("drawAgents", () => {
     const recent = [agent("fresh", "apex", { activeAt: NOW - 3000 })];
     expect(draw(stateWith(recent), 60, 3).grid.text(1).endsWith("now")).toBe(true);
     const never = [agent("quiet", "apex", { activeAt: undefined })];
-    expect(draw(stateWith(never), 60, 3).grid.text(1).trimEnd().endsWith("up")).toBe(true);
+    expect(draw(stateWith(never), 60, 3).grid.text(1).trimEnd().endsWith("apex")).toBe(true);
   });
 
-  test("the purpose column shows what someone said the agent is for, else the host's title", () => {
+  test("the purpose column shows what the agent said it is for; a title is not a purpose", () => {
     const rows = [
       agent("a", "apex", {
         purpose: "reviews auth changes",
@@ -110,20 +111,34 @@ describe("drawAgents", () => {
     const { grid } = draw(stateWith(rows, { selectedAgentId: undefined }), 80, 5);
     expect(grid.text(1)).toContain("reviews auth changes");
     expect(grid.text(1)).not.toContain("ignored");
-    expect(grid.text(2)).toContain("Step-by-step deployment plan");
+    expect(grid.text(2)).not.toContain("Step-by-step deployment plan");
     expect(styleOf(grid, "reviews", 1)).toBe("plain");
   });
 
-  test("reachability is ok or bad", () => {
-    const { grid } = draw(stateWith(roster, { selectedAgentId: undefined }), 60, 6);
-    expect(styleOf(grid, "up", 1)).toBe("ok");
-    expect(styleOf(grid, "down", 3)).toBe("bad");
+  test("the status cell shows the host's word, or why the session is unreachable, in bad", () => {
+    const { grid } = draw(stateWith(roster, { selectedAgentId: undefined }), 70, 6);
+    expect(styleOf(grid, "idle", 2)).toBe("plain");
+    expect(grid.text(3)).toContain("no window"); // tester is unreachable: the note, not "busy"
+    expect(grid.text(3)).not.toContain("busy");
+    expect(styleOf(grid, "no", 3)).toBe("bad");
+  });
+
+  test("a session that has not registered is dim and says so in the purpose cell", () => {
+    const rows = [
+      agent("ada", "apex", { purpose: "reviews" }),
+      agent("candidate-1", "apex", { registered: false, id: "candidate:apex:k9" }),
+    ];
+    const { grid } = draw(stateWith(rows, { selectedAgentId: undefined }), 70, 4);
+    expect(grid.text(2)).toContain("not registered");
+    expect(styleOf(grid, "candidate-1", 2)).toBe("dim");
+    expect(styleOf(grid, "not", 2)).toBe("dim");
+    expect(styleOf(grid, "ada", 1)).toBe(providerStyle(rows, "apex")); // registered rows keep their hue
   });
 
   test("the selected row is inverse across the whole pane, every cell", () => {
     const { grid } = draw(stateWith(roster, {}, "id-tester"), 60, 6);
     expect(new Set(styles(grid, 3))).toEqual(new Set(["selected"]));
-    expect(grid.text(3)).toMatch(/^ {2}tester\s+zephyr\s+down/);
+    expect(grid.text(3)).toMatch(/^ {2}tester\s+zephyr\s+no window/);
     expect(styles(grid, 2)).not.toContain("selected");
   });
 
@@ -172,66 +187,35 @@ describe("drawAgents", () => {
       50,
       4,
     ).grid;
-    expect(top.text(1).indexOf("up")).toBe(scrolled.text(1).indexOf("up"));
+    expect(top.text(1).indexOf("idle")).toBe(scrolled.text(1).indexOf("idle"));
     expect(top.text(1).indexOf("h ")).toBe(scrolled.text(1).indexOf("h "));
   });
 
   test("names are capped, the purpose takes the slack, and narrow panes drop provider, active, status", () => {
     const rows = [agent("a-very-long-agent-name-indeed", "north-shell", { status: "idle" })];
-    // Mark 2; name capped at 18 (+2); host 11, reach 4, status 4, active 4, each +2: 53 in all.
+    // Mark 2; name capped at 18 (+2); provider 11, status 4, active 4, each +2: 47 in all.
     expect(columns(80, rows)).toEqual({
       name: 18,
-      purpose: 27,
+      purpose: 33,
       provider: 11,
-      reach: 4,
+      status: 4,
+      active: 4,
+    });
+    expect(columns(60, rows)).toEqual({
+      name: 18,
+      purpose: 13,
+      provider: 11,
       status: 4,
       active: 4,
     });
     // Under 12 cells of purpose the least useful column goes, one at a time.
-    expect(columns(60, rows)).toEqual({
-      name: 18,
-      purpose: 20,
-      provider: 0,
-      reach: 4,
-      status: 4,
-      active: 4,
-    });
-    expect(columns(38, rows)).toEqual({
-      name: 18,
-      purpose: 10,
-      provider: 0,
-      reach: 4,
-      status: 0,
-      active: 0,
-    });
-    expect(columns(12, rows)).toEqual({
-      name: 4,
-      purpose: 0,
-      provider: 0,
-      reach: 4,
-      status: 0,
-      active: 0,
-    });
+    expect(columns(38, rows)).toEqual({ name: 18, purpose: 16, provider: 0, status: 0, active: 0 });
+    expect(columns(12, rows)).toEqual({ name: 10, purpose: 0, provider: 0, status: 0, active: 0 });
 
     const { grid } = draw(stateWith(rows), 32, 3);
-    expect(grid.text(1).startsWith("  a-very-long-agent…")).toBe(true);
-    expect(grid.text(1).trimEnd().endsWith("up")).toBe(true);
+    expect(grid.text(1).trimEnd()).toBe("  a-very-long-agent…");
     expect(grid.text(1).length).toBe(32);
     expect(styleAt(grid, 2, 1)).toBe("selected");
-  });
-
-  test("an unreachable agent shows its note only when names keep their room", () => {
-    const rows = [
-      agent("planner", "north-shell"),
-      agent("tester", "zephyr", { reachable: false, note: "no window" }),
-    ];
-    const roomy = draw(stateWith(rows, { selectedAgentId: undefined }), 70, 4).grid;
-    expect(roomy.text(2)).toMatch(/down no window/);
-    expect(styleOf(roomy, "no window", 2)).toBe("bad");
-    expect(columns(70, rows).reach).toBe("down no window".length);
-    const cramped = draw(stateWith(rows), 40, 4).grid;
-    expect(cramped.text(2)).toMatch(/down\s/);
-    expect(cramped.text(2)).not.toMatch(/no window/);
   });
 
   test("a filter narrows the rows; the count lives in the tab row, not the title", () => {

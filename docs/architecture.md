@@ -98,7 +98,7 @@ Callers identify themselves on the RPC with one of:
 
 | kind | fields | resolved by |
 |---|---|---|
-| `self` | provider, key, name | `providerManager.identify`: bind by (provider, key), record contact |
+| `self` | provider, key, name | the agent registered under (provider, key), or none: an unregistered session can `attach`, `who`, and `register`, nothing else |
 | `token` | id, secret | agent looked up by id; secret verified against its credential hash; record contact |
 
 `identity.ts` decides which to send from inside a process: explicit `--as` (a
@@ -187,10 +187,14 @@ connection dropped mid-response leaves them marked read and unseen.
 returns per-provider `observed` results (including empty observations) or `failed`
 results with details. It does not register agents, call setup, or deliver messages.
 
-Every 3 s, and on demand, the manager runs discovery and applies the POC's existing
-automatic binding policy: each top-level observation is bound to an agent by
-(provider, key), with display facts kept in memory. Explicit session connection is a
-documented direction, not yet a replacement for this policy. A throwing provider
+Every 3 s, and on demand, the manager runs discovery and keeps what it saw in
+memory: each top-level observation is a *candidate*, keyed by (provider, key).
+Discovery never creates an agent. Registration is the one door into core: a
+session registers itself (the shim's `register` tool, stating its purpose), a
+person registers a candidate by name, or a candidate is named as a recipient or
+a group member and is registered on the way in. Reads never register anything.
+A registered agent's presence is its candidate's observation; its name follows
+the host's until a person pins it. A throwing provider
 keeps its previous presence. An
 agent is live if its provider saw it on the last pass, or if it called in itself
 within the last ten minutes (`touch`, from `identify` and token use). `deliver()`
@@ -269,7 +273,7 @@ view uses; agents keep `pull`.
 | Claude Code | session id from `~/.claude/sessions/<pid>.json` | registry files with a live pid | post to the session's inbox socket via a short-lived helper, with the token if attached | `~/.claude/projects/.../<session>.jsonl`: `queue-operation remove` or a `user` entry | user settings: allow `mcp__modelbus__*`, SessionStart hook; `claude mcp add -s user` |
 | Codex | root thread id (lock files held by the process; classified by state DB `thread_source`, rollout header, or single-lock rule) | `codex` processes on a tty | `codex queue --thread <id>` | rollout `response_item` user message | `codex mcp add`; `[mcp_servers.modelbus.tools.<t>] approval_mode = "approve"` |
 | Aside | session id from `~/.aside/u/<N>/state.db` (account remembered in memory) | daemon health + state DB, last 7 days | `aside --account u<N> session queue <id>` | `~/.aside/u/<N>/sessions/<date>_<id>/messages.jsonl` user entry | each account's settings: `mcp.servers.modelbus` (env names the account) + cached tool inventory |
-| registered | minted non-secret key | none: live by contact | none: sent until the process pulls | on pull | none |
+| unspecified (a process) | minted non-secret key | none: live by contact | none: sent until the process pulls | on pull | none |
 
 Claude Code specifics: the token is consulted only if the posting process has
 exited, hence the helper (`providers/claude-code/post.ts`, run as its own process).
@@ -300,8 +304,10 @@ method table in `daemon.ts` is the protocol; `client.ts` derives its types from 
 so `rpc("who", { filter })` is checked at compile time. See `protocol.md`.
 
 Clients: the CLI (`send`, `sync`, `who`, `log`, `register`, `attach`, `init`,
-`mcp`, `serve`); the MCP shim (`send`, `who`, and
-`sync` only with `--with-sync`; one-sentence instructions); any program via the
+`mcp`, `serve`, `start`, `stop`, `restart`, `tui`, `web`, `group`, `rename`,
+`describe`, `status`, `chats`, `history`); the MCP shim (`register`, `send`,
+`who`, and `sync` only with `--with-sync`; its instructions tell an unregistered
+session to register with one line on what it is working on); any program via the
 socket. `MODELBUS_HOME` points clients at another instance.
 
 Web chats: `modelbus web` serves one MCP endpoint over HTTP on localhost, with

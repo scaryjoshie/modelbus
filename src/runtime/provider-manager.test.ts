@@ -72,7 +72,7 @@ describe("provider manager", () => {
     const host = new FakeHost();
     const provider: Provider = { name: host.name, connector: host.connector };
     const manager = new ProviderManager(store, [provider]);
-    const agent = manager.identify({ provider: host.name, key: "direct", name: "direct" });
+    const agent = manager.register({ provider: host.name, key: "direct", name: "direct" });
     await manager.reconcile();
     expect(await discover([provider])).toEqual([]);
     expect(manager.list().map((a) => a.id)).toEqual([agent.id]);
@@ -101,40 +101,68 @@ describe("provider manager", () => {
     ]);
   });
 
-  test("observations become agents; the same key stays the same agent across passes", async () => {
-    const { host, t } = setup();
+  test("observations are candidates, not agents; registering one makes the agent", async () => {
+    const { store, host, t } = setup();
     host.live = [obs("k1", "one"), obs("k2", "two")];
     await t.reconcile();
-    const first = t.list();
-    expect(first.map((e) => e.name).sort()).toEqual(["one", "two"]);
-    const idOne = first.find((e) => e.name === "one")?.id;
+    expect(t.list()).toEqual([]); // nothing is on the bus yet
+    expect(
+      t
+        .candidates()
+        .map((c) => c.name)
+        .sort(),
+    ).toEqual(["one", "two"]);
+    expect(store.listAgents()).toEqual([]);
 
-    host.live = [obs("k1", "one renamed by host")];
-    await t.reconcile();
-    const second = t.list();
-    expect(second.map((e) => e.name)).toEqual(["one renamed by host"]); // follows the host
-    expect(second[0]?.id).toBe(idOne); // but the id is ours and never changes
+    const c = t.candidateNamed("one");
+    if (!c) throw new Error("candidate missing");
+    const one = t.register(c);
+    expect(t.list().map((e) => e.name)).toEqual(["one"]);
+    expect(t.candidates().map((c) => c.name)).toEqual(["two"]); // still only a candidate
+    expect(t.list()[0]?.reachable).toBe(true); // presence comes from the observation
 
-    host.live = [obs("k1", "one"), obs("k2", "two")];
+    // the same key stays the same agent, and its name follows the host until pinned
+    host.live = [obs("k1", "one renamed by host"), obs("k2", "two")];
     await t.reconcile();
-    expect(t.list().find((e) => e.name === "two")?.id).toBe(
-      first.find((e) => e.name === "two")?.id,
-    );
+    expect(t.list().map((e) => e.name)).toEqual(["one renamed by host"]);
+    expect(t.list()[0]?.id).toBe(one.id);
+    store.rename(one.id, "pinned");
+    host.live = [obs("k1", "one again"), obs("k2", "two")];
+    await t.reconcile();
+    expect(t.list()[0]?.name).toBe("pinned");
   });
 
-  test("subagents never become peers", async () => {
+  test("subagents are never candidates", async () => {
     const { host, t } = setup();
     host.live = [obs("root", "root"), obs("child", "child", { relationship: "subagent" })];
     await t.reconcile();
-    expect(t.list().map((e) => e.name)).toEqual(["root"]);
+    expect(t.candidates().map((c) => c.name)).toEqual(["root"]);
+  });
+
+  test("attach reaches the provider by key whether or not the session registered", async () => {
+    const store = new Store(":memory:");
+    const info: Array<{ key: string; token: unknown }> = [];
+    const p: Provider = {
+      name: "attachable",
+      connector: {
+        deliver: async () => ({ result: { status: "delivered" as const } }),
+        attach: (key, i) => info.push({ key, token: i.token }),
+      },
+    };
+    const t = new ProviderManager(store, [p]);
+    expect(t.attach({ provider: "attachable", key: "s1" }, { token: "t" })).toBe(true);
+    expect(t.attach({ provider: "nowhere", key: "s1" }, { token: "t" })).toBe(false);
+    expect(info).toEqual([{ key: "s1", token: "t" }]);
+    store.close();
   });
 
   test("deliver hands the provider the key it observed", async () => {
-    const { store, host, t } = setup();
+    const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
-    const agent = store.agentByName("one");
-    if (!agent) throw new Error("agent missing");
+    const c = t.candidateNamed("one");
+    if (!c) throw new Error("candidate missing");
+    const agent = t.register(c);
     let read = false;
     const result = await t.deliver(agent, outbound(agent, "hello"), () => {
       read = true;
@@ -146,25 +174,29 @@ describe("provider manager", () => {
 
   test("an agent nobody observes is live while it calls in", async () => {
     const { t } = setup();
-    const a = t.identify({ provider: "elsewhere", key: "x", name: "lonely" });
+    const a = t.register({ provider: "elsewhere", key: "x", name: "lonely" });
     expect(t.list().map((e) => `${e.name}:${e.note}`)).toEqual(["lonely:by sync"]);
     const result = await t.deliver(a, outbound(a, "hi"), () => undefined);
     expect(result.status).toBe("sent");
   });
 
-  test("identify binds to the observed agent, not a new one", async () => {
+  test("a session registering itself binds to its observed key, not a new one", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
-    const a = t.identify({ provider: "fake", key: "k1", name: "one" });
+    expect(t.agentFor({ provider: "fake", key: "k1" })).toBeUndefined();
+    const a = t.register({ provider: "fake", key: "k1", name: "one" });
+    expect(t.agentFor({ provider: "fake", key: "k1" })?.id).toBe(a.id);
     expect(t.list()[0]?.id).toBe(a.id);
     expect(t.list()).toHaveLength(1);
+    expect(t.candidates()).toEqual([]);
   });
 
   test("the manager owns watches: drops finished ones, closes the rest on stop", async () => {
     const { store, host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
+    t.register({ provider: "fake", key: "k1", name: "one" }); // observed sessions register to be on the bus
     const a = store.agentByName("one");
     if (!a) throw new Error("agent missing");
 
@@ -196,11 +228,13 @@ describe("provider manager", () => {
   test("ready() settles after the first pass; the roster is complete by then", async () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];
+    t.register({ provider: "fake", key: "k1", name: "one" }); // observed sessions register to be on the bus
     t.start(60_000);
     try {
-      expect(t.list()).toEqual([]); // the first pass has not finished yet
+      expect(t.list()[0]?.note).toBe("by sync"); // the first pass has not finished yet
       await t.ready();
       expect(t.list().map((e) => e.name)).toEqual(["one"]);
+      expect(t.list()[0]?.note).toBeUndefined(); // now observed
     } finally {
       t.stop();
     }
@@ -213,6 +247,7 @@ describe("provider manager", () => {
       seen.push(`${a.name}${host.queueSurvivesRestart ? "" : ":dropsQueue"}`);
     };
     host.live = [obs("k1", "one", { reachable: false, note: "no turns yet" })];
+    t.register({ provider: "fake", key: "k1", name: "one" }); // observed sessions register to be on the bus
     await t.reconcile();
     expect(seen).toEqual([]); // present but not reachable
 
@@ -221,11 +256,11 @@ describe("provider manager", () => {
     await t.reconcile();
     expect(seen).toEqual(["one"]); // once, not on every pass
 
-    host.live = [];
+    host.live = [obs("k1", "one", { reachable: false, note: "restarting" })];
     await t.reconcile();
     host.live = [obs("k1", "one")];
     await t.reconcile();
-    expect(seen).toEqual(["one", "one"]); // gone and back: again
+    expect(seen).toEqual(["one", "one"]); // unreachable and back: again
   });
 
   test("onReachable carries the provider's statement about its host's queue", async () => {
@@ -241,6 +276,7 @@ describe("provider manager", () => {
     t.onReachable = async (a, h) => {
       seen.push(`${a.name}:${h.queueSurvivesRestart}`);
     };
+    t.register({ provider: "drops", key: "k", name: "codexish" });
     await t.reconcile();
     expect(seen).toEqual(["codexish:false"]);
     store.close();
@@ -248,7 +284,7 @@ describe("provider manager", () => {
 
   test("an agent's own status shows when its host reports none; contact is its activity", () => {
     const { host, t } = setup();
-    const lonely = t.identify({ provider: "elsewhere", key: "x", name: "lonely" });
+    const lonely = t.register({ provider: "elsewhere", key: "x", name: "lonely" });
     t.setStatus(lonely.id, "  indexing the repo ");
     const before = Date.now();
     const entry = t.list().find((e) => e.id === lonely.id);
@@ -258,6 +294,7 @@ describe("provider manager", () => {
     expect(t.list().find((e) => e.id === lonely.id)?.status).toBeUndefined();
     // a host's own status wins over the agent's
     host.live = [obs("k1", "one", { status: "busy", activeAt: 42 })];
+    t.register({ provider: "fake", key: "k1", name: "one" });
     return t.reconcile().then(() => {
       const one = t.list().find((e) => e.name === "one");
       if (!one) throw new Error("agent missing");
@@ -271,6 +308,7 @@ describe("provider manager", () => {
     const { host, t } = setup();
     host.live = [obs("k1", "one")];
     await t.reconcile();
+    t.register({ provider: "fake", key: "k1", name: "one" }); // observed sessions register to be on the bus
     host.discovery.observe = async () => {
       throw new Error("host down");
     };

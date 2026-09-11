@@ -8,13 +8,15 @@ import { drawEmpty, EMPTY, REGISTER_HINT } from "./empty.ts";
 
 /**
  * The roster: one row per agent (a mark when it is pending, then name, purpose,
- * provider, reachability, status, last active), the cursor row inverse, sorted and
- * filtered by `filter.ts`. A name and its host tag share the host's hue, so the
- * color says where an agent runs and the tag is its legend; the mark is accent.
- * The purpose column shows what a person or the agent said it is for, else the
- * host's own title. Columns are sized from the whole visible list, so scrolling
- * never shifts one; when the pane is narrow the least useful columns go first
- * (provider, then active, then status) and the purpose keeps the rest.
+ * provider, status, last active), the cursor row inverse, sorted and filtered by
+ * `filter.ts`. A name and its provider tag share the provider's hue, so the color
+ * says where an agent runs and the tag is its legend; the mark is accent. The
+ * status cell shows what the host says the session is doing, or, when the
+ * provider cannot reach it, why, in `bad`. Sessions that have not registered are
+ * listed dim, so what is on the bus and what merely exists are told apart.
+ * Columns are sized from the whole visible list, so scrolling never shifts one;
+ * when the pane is narrow the least useful columns go first (provider, then
+ * active, then status) and the purpose keeps the rest.
  */
 
 /** The pending mark: one cell at the row's left, blank on unmarked rows. */
@@ -33,32 +35,31 @@ const WORKING_STATUSES = new Set(["busy", "shell"]);
 const NAME_MAX_COLS = 18;
 /** A purpose column narrower than this reads worse than one column fewer. */
 const PURPOSE_MIN_COLS = 12;
-/** "up" or "down". */
-const REACH_COLS = 4;
-/** Widest a host name may push the name column; longer ones get an ellipsis. */
+/** Widest a provider name may push the name column; longer ones get an ellipsis. */
 const PROVIDER_MAX_COLS = 12;
-const STATUS_MAX_COLS = 16;
-/** "down" plus its note grows the reachability column only up to this. */
-const REACH_NOTE_MAX_COLS = 24;
-/** Names keep at least this much before a note may take the rest. */
-const NAME_ROOMY_COLS = 24;
+/** A status, or the reason the provider cannot reach the session. */
+const STATUS_MAX_COLS = 24;
 
 const TITLE = "agents";
-const REACHABLE = "up";
-const UNREACHABLE = "down";
+/** What the purpose cell says for a session that is not on the bus yet. */
+const NOT_REGISTERED = "not registered";
 
 /** Column widths in cells; 0 means the column is not drawn. */
 export interface Columns {
   name: number;
   purpose: number;
   provider: number;
-  reach: number;
   status: number;
   active: number;
 }
 
-/** What the purpose column shows: what someone said the agent is for, else the host's title. */
-export const purposeText = (agent: Agent): string => agent.purpose ?? agent.title ?? "";
+/** The purpose cell: what the agent said it is for; a candidate is told apart here. */
+export const purposeText = (agent: Agent): string =>
+  agent.registered ? (agent.purpose ?? "") : NOT_REGISTERED;
+
+/** The status cell: the host's word, or why the provider cannot reach the session. */
+export const statusText = (agent: Agent): string =>
+  agent.reachable ? (agent.status ?? "") : (agent.note ?? "unreachable");
 
 /** "now" while the host says the session is working or it just did something; else an age. */
 export function activeText(agent: Agent, now: number): string {
@@ -71,17 +72,10 @@ export function activeText(agent: Agent, now: number): string {
 const widest = (values: Array<string | undefined>): number =>
   values.reduce((w, v) => Math.max(w, v === undefined ? 0 : width(v)), 0);
 
-/** The reachability cell: "down" with its note when the column is wide enough for one. */
-function reachText(agent: Agent, cols: number): string {
-  if (agent.reachable) return REACHABLE;
-  const note = agent.note ?? "";
-  return note !== "" && cols > REACH_COLS ? `${UNREACHABLE} ${note}` : UNREACHABLE;
-}
-
 /** Cells everything but the purpose takes: the mark, and each drawn column with its gap. */
 const used = (c: Columns): number =>
   MARK_COLS +
-  [c.name, c.provider, c.reach, c.status, c.active].reduce(
+  [c.name, c.provider, c.status, c.active].reduce(
     (sum, w) => (w > 0 ? sum + w + GAP_COLS : sum),
     0,
   );
@@ -92,8 +86,7 @@ export function columns(w: number, rows: Agent[]): Columns {
     name: Math.max(1, Math.min(widest(rows.map((a) => a.name)), NAME_MAX_COLS)),
     purpose: 0,
     provider: Math.min(widest(rows.map((a) => a.provider)), PROVIDER_MAX_COLS),
-    reach: REACH_COLS,
-    status: Math.min(widest(rows.map((a) => a.status)), STATUS_MAX_COLS),
+    status: Math.min(widest(rows.map(statusText)), STATUS_MAX_COLS),
     active: ACTIVE_COLS,
   };
   const dropOrder: Array<keyof Columns> = ["provider", "active", "status"];
@@ -103,13 +96,6 @@ export function columns(w: number, rows: Agent[]): Columns {
   }
   c.purpose = Math.max(0, w - used(c));
   if (c.purpose === 0) c.name = Math.max(1, w - used({ ...c, name: 0 }));
-  // A note is worth reading only when the purpose is not paying for it.
-  const notes = rows.filter((a) => !a.reachable).map((a) => reachText(a, Infinity));
-  const wide = Math.min(widest(notes), REACH_NOTE_MAX_COLS);
-  if (wide > c.reach && c.purpose - (wide - c.reach) >= NAME_ROOMY_COLS) {
-    c.purpose -= wide - c.reach;
-    c.reach = wide;
-  }
   return c;
 }
 
@@ -127,8 +113,9 @@ interface Row {
 
 function drawRow(row: Row, rect: Rect, c: Columns, now: number, roster: Agent[], grid: Grid): void {
   const { agent, y, selected } = row;
-  // The cursor row is inverse video and nothing else, so every cell shares one style.
-  const style = (role: Style): Style => (selected ? "selected" : role);
+  // The cursor row is inverse video and nothing else, so every cell shares one
+  // style; a session not on the bus is dim throughout.
+  const style = (role: Style): Style => (selected ? "selected" : agent.registered ? role : "dim");
   if (selected) grid.fill({ x: rect.x, y, w: rect.w, h: 1 }, "selected");
   let x = rect.x;
   if (row.pending) grid.put(x, y, PENDING_MARK, style("accent"), 1);
@@ -155,16 +142,9 @@ function drawRow(row: Row, rect: Rect, c: Columns, now: number, roster: Agent[],
     );
     x += c.provider + GAP_COLS;
   }
-  grid.put(
-    x,
-    y,
-    truncate(reachText(agent, c.reach), c.reach),
-    style(agent.reachable ? "ok" : "bad"),
-    c.reach,
-  );
-  x += c.reach + GAP_COLS;
   if (c.status > 0) {
-    grid.put(x, y, truncate(agent.status ?? "", c.status), style("plain"), c.status);
+    const role: Style = agent.reachable ? "plain" : "bad";
+    grid.put(x, y, truncate(statusText(agent), c.status), style(role), c.status);
     x += c.status + GAP_COLS;
   }
   if (c.active > 0) {

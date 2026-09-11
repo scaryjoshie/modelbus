@@ -332,6 +332,26 @@ export class Store {
     return rows.reverse();
   }
 
+  /** The groups this agent belongs to, each with its members' names. */
+  groupsOf(agentId: string): Array<{ name: string; members: string[] }> {
+    const mine = this.db
+      .select({ id: conversations.id, name: conversations.name })
+      .from(participants)
+      .innerJoin(conversations, eq(conversations.id, participants.conversationId))
+      .where(and(eq(participants.agentId, agentId), eq(conversations.kind, "group")))
+      .all();
+    return mine.map((g) => ({
+      name: g.name ?? "?",
+      members: this.db
+        .select({ name: agents.name })
+        .from(participants)
+        .innerJoin(agents, eq(agents.id, participants.agentId))
+        .where(eq(participants.conversationId, g.id))
+        .all()
+        .map((r) => r.name),
+    }));
+  }
+
   /** Ids of everyone sharing a group with this agent (itself included); undefined if it is in no group. */
   groupmates(agentId: string): Set<string> | undefined {
     const rows = this.db

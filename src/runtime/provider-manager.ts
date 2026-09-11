@@ -2,12 +2,13 @@ import type { DeliveryResult, Outbound } from "../core/delivery.ts";
 import type { Agent, Store } from "../core/store.ts";
 import type { Watch } from "../util/watch.ts";
 import { discover } from "./discovery.ts";
-import type { Provider } from "./provider.ts";
+import type { Observation, Provider } from "./provider.ts";
 
 /**
  * Host-agnostic session tracking. Owns the reconcile loop: ask every provider what
- * is live, bind each observation to an agent by (host, key), and remember what was
- * seen. Presence lives here in memory, not in the store: it is re-observed every
+ * is live and remember what was seen. Discovery makes candidates, not agents: a
+ * session becomes an agent only when it registers (itself, or by being added to a
+ * chat). Presence lives here in memory, not in the store: it is re-observed every
  * few seconds and only the daemon needs it.
  *
  * An agent is live if a provider saw it on its last pass, or if it called in
@@ -39,10 +40,17 @@ export interface RosterEntry extends Presence {
   purpose: string | null;
 }
 
+/** A session a provider sees that has not registered: visible, not yet on the bus. */
+export interface Candidate extends Presence {
+  provider: string;
+  key: string;
+  name: string;
+}
+
 export class ProviderManager {
   private readonly providers = new Map<string, Provider>();
-  /** provider -> agent id -> what it last observed. */
-  private readonly present = new Map<string, Map<string, Presence>>();
+  /** provider -> session key -> what it last observed (top-level sessions only). */
+  private readonly observed = new Map<string, Map<string, Observation>>();
   /** agent id -> last time it identified itself on the RPC. */
   private readonly contact = new Map<string, number>();
   /** agent id -> a status the agent set for itself; shown when its host reports none. */
@@ -105,19 +113,20 @@ export class ProviderManager {
     for (const result of await discover([...this.providers.values()])) {
       // A failed discovery is not evidence that the provider's sessions disappeared.
       if (result.status === "failed") continue;
-      const seen = new Map<string, Presence>();
+      const seen = new Map<string, Observation>();
       for (const o of result.observations) {
-        // Only confirmed top-level sessions become peers; subagents and uncertain
-        // classifications never silently turn into agents.
-        if (o.relationship !== "top-level") continue;
-        // Current POC policy: automatically bind observed top-level sessions.
-        // Discovery itself does not register them; explicit connection can replace
-        // this policy without changing provider discovery or the core API.
-        const agent = this.store.bind({ provider: result.provider, key: o.key, name: o.name });
-        const { key: _key, name: _name, relationship: _rel, ...presence } = o;
-        seen.set(agent.id, presence);
+        // Only confirmed top-level sessions are candidates; subagents and uncertain
+        // classifications never silently become agents.
+        if (o.relationship === "top-level") seen.set(o.key, o);
       }
-      this.present.set(result.provider, seen);
+      this.observed.set(result.provider, seen);
+      // A registered agent's name follows its host's until a person pins it.
+      for (const o of seen.values()) {
+        const agent = this.store.agentByKey(result.provider, o.key);
+        if (agent && agent.name !== o.name && !agent.namePinned) {
+          this.store.bind({ provider: result.provider, key: o.key, name: o.name });
+        }
+      }
     }
     await this.noticeReappearances();
   }
@@ -148,18 +157,49 @@ export class ProviderManager {
     else this.statuses.delete(agentId);
   }
 
-  /** A session identifying itself (hook or shim). */
-  identify(opts: { provider: string; key: string; name: string }): Agent {
+  /** The agent behind a self identity, if it has registered; contact is recorded either way. */
+  agentFor(identity: { provider: string; key: string }): Agent | undefined {
+    const agent = this.store.agentByKey(identity.provider, identity.key);
+    if (agent) this.touch(agent.id);
+    return agent;
+  }
+
+  /**
+   * Registration: the one door into core. A session (its own, or one a person
+   * or a chat pulled in) becomes an agent by (provider, key), with its purpose.
+   */
+  register(opts: { provider: string; key: string; name: string }): Agent {
     const agent = this.store.bind(opts);
     this.touch(agent.id);
     return agent;
   }
 
-  /** Hand provider-specific runtime info (e.g. a token) to the provider for this agent. */
-  attach(agent: Agent, info: Record<string, unknown>): boolean {
-    const provider = this.providers.get(agent.provider);
+  /** Sessions seen by a provider that have not registered. */
+  candidates(): Candidate[] {
+    const out: Candidate[] = [];
+    for (const [provider, seen] of this.observed) {
+      for (const o of seen.values()) {
+        if (this.store.agentByKey(provider, o.key)) continue;
+        const { key, name, relationship: _rel, ...presence } = o;
+        out.push({ provider, key, name, ...presence });
+      }
+    }
+    return out;
+  }
+
+  /** The candidate a person means by this name, if any. */
+  candidateNamed(name: string): Candidate | undefined {
+    return this.candidates().find((c) => c.name === name);
+  }
+
+  /**
+   * Hand provider-specific runtime info (e.g. a token) to the provider for a
+   * session, registered or not: delivery needs it either way.
+   */
+  attach(identity: { provider: string; key: string }, info: Record<string, unknown>): boolean {
+    const provider = this.providers.get(identity.provider);
     if (!provider?.connector?.attach) return false;
-    provider.connector.attach(agent.key, info);
+    provider.connector.attach(identity.key, info);
     return true;
   }
 
@@ -181,8 +221,11 @@ export class ProviderManager {
 
   private presenceOf(agent: Agent): Presence | undefined {
     const own = this.statuses.get(agent.id);
-    const observed = this.present.get(agent.provider)?.get(agent.id);
-    if (observed) return { ...observed, status: observed.status ?? own };
+    const o = this.observed.get(agent.provider)?.get(agent.key);
+    if (o) {
+      const { key: _key, name: _name, relationship: _rel, ...observed } = o;
+      return { ...observed, status: observed.status ?? own };
+    }
     const last = this.contact.get(agent.id);
     if (last !== undefined && Date.now() - last < CONTACT_TIMEOUT_MS) {
       return { reachable: true, note: "by sync", activeAt: last, status: own };

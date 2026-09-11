@@ -67,11 +67,12 @@ explicit way to connect sessions, with setup varying by host and possibly by
 session. A future automatic mode can compose the same operations. The exact UI
 and policy remain open.
 
-Current compatibility: the POC runtime still automatically binds discovered
-top-level sessions during reconciliation. The extracted `discover(providers)`
-operation itself does not bind anything. Replacing that runtime policy requires
-a usable explicit connection entry point; this cleanup does not silently remove
-existing sessions from the bus.
+Settled 2026-09-11 (Joshua): discovery makes candidates, registration makes
+agents, and every agent registers, stating its purpose. A discovered session is
+visible (dim, in the TUI and `who`) but not on the bus until it registers itself
+through the shim, a person registers it, or it is named into a chat. Reads never
+register anything. The shim tells an unregistered session, in its instructions,
+to register with one line on what it is working on.
 
 ## Identity and credentials: software remembers the secret
 
@@ -368,7 +369,6 @@ its queue; the daemon as a login service that clients never start; a web door
 - The inbox text format (`name: text`, continuation indented) mangles code.
 - Provider instances and presentation metadata (icons, app grouping).
 - Cancel a message still in the daemon (`withdrawn` state); needs a UI to matter.
-- Explicit connection replacing automatic binding of discovered sessions.
 - Shared artifacts / file board.
 - A relay service so web chats need no user-installed tunnel.
 - Subagents or Codex threads as addressable agents (Codex may already have a door
@@ -383,8 +383,9 @@ its queue; the daemon as a login service that clients never start; a web door
 - `discover(providers)` returns observed/failed results independently of registration.
 - Layer checks prevent providers importing core API/store or runtime implementation.
 - A bound client carries identity automatically for MCP calls.
-- Existing host keys, database, RPC methods, setup behavior, and reconciliation's
-  automatic binding policy remain compatible. No web/browser integration is installed.
+- Existing host keys, database, RPC methods, and setup behavior remain compatible.
+  No web/browser integration is installed. (Automatic binding was later replaced
+  by explicit registration; see above.)
 
 ## Documentation evidence (reviewed 2026-09-09)
 

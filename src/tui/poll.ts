@@ -44,9 +44,18 @@ export function startPoller(opts: PollOptions): { stop: () => void } {
           : undefined,
       ]);
       const at = Date.now();
+      // Candidates sit in the same list as agents, marked unregistered, keyed by
+      // provider and session key since they have no id yet.
+      const candidates = who.candidates.map((c) => ({
+        ...c,
+        id: `candidate:${c.provider}:${c.key}`,
+        lastSeen: 0,
+        purpose: null,
+        registered: false,
+      }));
       opts.dispatch({
         type: "poll",
-        agents: who.agents,
+        agents: [...who.agents.map((a) => ({ ...a, registered: true })), ...candidates],
         messages: log.rows,
         conversations: chats.conversations,
         at,
