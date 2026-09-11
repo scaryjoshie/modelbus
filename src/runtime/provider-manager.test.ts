@@ -27,6 +27,7 @@ function outbound(from: Agent, body: string): Outbound {
   return {
     message: { seq: 1, id: "m1", conversationId: "c1", fromAgentId: from.id, body, createdAt: 0 },
     from,
+    conversation: { id: "c1", kind: "dm", key: "dm:c1", name: null, createdAt: 0 },
   };
 }
 

@@ -3,7 +3,9 @@ CREATE TABLE `agents` (
 	`name` text NOT NULL,
 	`host` text NOT NULL,
 	`host_key` text NOT NULL,
-	`last_seen` integer NOT NULL
+	`last_seen` integer NOT NULL,
+	`name_pinned` integer DEFAULT 0 NOT NULL,
+	`former_name` text
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `agents_name_unique` ON `agents` (`name`);--> statement-breakpoint
@@ -12,10 +14,12 @@ CREATE TABLE `conversations` (
 	`id` text PRIMARY KEY NOT NULL,
 	`kind` text NOT NULL,
 	`key` text NOT NULL,
+	`name` text,
 	`created_at` integer NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `conversations_key_unique` ON `conversations` (`key`);--> statement-breakpoint
+CREATE UNIQUE INDEX `conversations_name_unique` ON `conversations` (`name`);--> statement-breakpoint
 CREATE TABLE `credentials` (
 	`agent_id` text PRIMARY KEY NOT NULL,
 	`secret_hash` text NOT NULL,

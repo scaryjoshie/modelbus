@@ -56,11 +56,20 @@ const authed = <S extends z.ZodType, R>(m: {
   handler(params: z.infer<S>, agentId: string): R | Promise<R>;
 }) => ({ ...m, identity: true as const });
 
+/** A method anyone may call, that behaves differently for an identified caller. */
+const scoped = <S extends z.ZodType, R>(m: {
+  params: S;
+  handler(params: z.infer<S>, agentId: string | undefined): R | Promise<R>;
+}) => ({ ...m, identity: "optional" as const });
+
 interface AnyMethod {
   params: z.ZodType;
-  identity: boolean;
+  identity: boolean | "optional";
   handler(params: unknown, agentId?: string): unknown;
 }
+
+/** A conversation as a person or an agent spells it: `#group`, or `a,b` for a DM. */
+const CONVERSATION_HELP = "a group as #name, or two agent names as a,b";
 
 function buildMethods(store: Store, api: Api, providerManager: ProviderManager) {
   /** Clients address agents by display name; core only knows ids. */
@@ -69,6 +78,26 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     if (!agent) throw new ApiError(`no agent named "${name}"; try who`);
     return agent;
   };
+  const groupNamed = (spec: string): Conversation => {
+    const group = store.groupByName(spec.replace(/^#/, ""));
+    if (!group) throw new ApiError(`no group named "${spec}"; try chats`);
+    return group;
+  };
+  /** Where a send from `from` addressed `to` goes: a group by #name, else the DM with that agent. */
+  const conversationFor = (from: Agent, to: string): Conversation => {
+    if (to.startsWith("#")) return groupNamed(to);
+    const other = agentNamed(to);
+    if (other.id === from.id) throw new ApiError("cannot send to yourself");
+    return store.dm(from.id, other.id);
+  };
+  /** A conversation named from outside any sender: `#group` or `a,b`. */
+  const conversationNamed = (spec: string): Conversation => {
+    if (spec.startsWith("#")) return groupNamed(spec);
+    const [a, b, ...rest] = spec.split(",").map((n) => n.trim());
+    if (!a || !b || rest.length) throw new ApiError(`conversation must be ${CONVERSATION_HELP}`);
+    return store.dm(agentNamed(a).id, agentNamed(b).id);
+  };
+
   return {
     ping: open({ params: z.object({}), handler: () => ({ ok: true, pid: process.pid }) }),
     bind: authed({
@@ -96,12 +125,20 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
     send: authed({
       params: z.object({ to: z.string(), body: z.string(), wait: z.number().optional() }),
       handler: async (p, id) => {
-        if (!store.agentByName(p.to)) await providerManager.reconcile();
-        return api.send({ fromId: id, toId: agentNamed(p.to).id, body: p.body, wait: p.wait });
+        if (!p.to.startsWith("#") && !store.agentByName(p.to)) await providerManager.reconcile();
+        const from = store.agentById(id) as Agent;
+        const conversation = conversationFor(from, p.to);
+        return api.send({
+          fromId: id,
+          conversationId: conversation.id,
+          body: p.body,
+          wait: p.wait,
+        });
       },
     }),
     pull: authed({
       params: z.object({
+        /** An agent name (that DM) or #group. */
         scope: z.string().optional(),
         wait: z.number().optional(),
         limit: z.number().optional(),
@@ -109,25 +146,82 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       handler: (p, id) =>
         api.pull({
           agentId: id,
-          scopeId: p.scope ? agentNamed(p.scope).id : undefined,
+          conversationId: p.scope
+            ? conversationFor(store.agentById(id) as Agent, p.scope).id
+            : undefined,
           wait: p.wait,
           limit: p.limit,
         }),
     }),
-    who: open({
-      params: z.object({ filter: z.string().optional(), fresh: z.boolean().optional() }),
-      handler: async (p) => {
+    who: scoped({
+      params: z.object({
+        filter: z.string().optional(),
+        fresh: z.boolean().optional(),
+        /** Only this group's members. */
+        group: z.string().optional(),
+        /** Everyone, even for a caller that belongs to groups. */
+        all: z.boolean().optional(),
+      }),
+      handler: async (p, id) => {
         // Right after startup the first pass may still be running; a roster
         // from before it finished would be empty.
         await (p.fresh ? providerManager.reconcile() : providerManager.ready());
-        return { agents: providerManager.list(p.filter) };
+        let agents = providerManager.list(p.filter);
+        // An agent in groups sees its groups' members by default: the ones that matter.
+        const scope = p.group
+          ? new Set(store.participants(groupNamed(p.group).id))
+          : id && !p.all
+            ? store.groupmates(id)
+            : undefined;
+        if (scope) agents = agents.filter((a) => scope.has(a.id));
+        return { agents };
       },
     }),
     log: open({
-      params: z.object({ a: z.string().optional(), b: z.string().optional() }),
+      params: z.object({ conversation: z.string().optional() }),
       handler: (p) => ({
         rows: api.log({
-          between: p.a && p.b ? [agentNamed(p.a).id, agentNamed(p.b).id] : undefined,
+          conversationId: p.conversation ? conversationNamed(p.conversation).id : undefined,
+        }),
+      }),
+    }),
+    group: open({
+      params: z.object({
+        name: z.string(),
+        add: z.array(z.string()).optional(),
+        remove: z.array(z.string()).optional(),
+      }),
+      handler: (p) => {
+        const r = api.group({
+          name: p.name.replace(/^#/, ""),
+          add: p.add?.map((n) => agentNamed(n).id),
+          remove: p.remove?.map((n) => agentNamed(n).id),
+        });
+        return {
+          conversation: r.conversation,
+          members: r.members.map((m) => store.agentById(m) as Agent),
+        };
+      },
+    }),
+    rename: open({
+      params: z.object({ agent: z.string(), name: z.string() }),
+      handler: (p) => ({ agent: api.rename(agentNamed(p.agent).id, p.name) }),
+    }),
+    conversations: open({
+      params: z.object({}),
+      handler: () => ({ conversations: api.conversations() }),
+    }),
+    history: open({
+      params: z.object({
+        conversation: z.string(),
+        before: z.number().optional(),
+        limit: z.number().optional(),
+      }),
+      handler: (p) => ({
+        items: api.history({
+          conversationId: conversationNamed(p.conversation).id,
+          beforeSeq: p.before,
+          limit: p.limit,
         }),
       }),
     }),
@@ -135,6 +229,7 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
 }
 
 type Agent = NonNullable<ReturnType<Store["agentById"]>>;
+type Conversation = NonNullable<ReturnType<Store["conversationById"]>>;
 /** The protocol, as a type the client can check calls against. */
 export type Methods = ReturnType<typeof buildMethods>;
 
@@ -187,7 +282,10 @@ export function createDaemon(
     if (!m) return Response.json({ error: `unknown method ${env.method}` }, { status: 404 });
     try {
       const params = m.params.parse(env.params);
-      const agentId = m.identity ? resolveIdentity(env.identity) : undefined;
+      const agentId =
+        m.identity === true || (m.identity === "optional" && env.identity)
+          ? resolveIdentity(env.identity)
+          : undefined;
       return Response.json(await m.handler(params, agentId));
     } catch (e) {
       const status = e instanceof ApiError ? 422 : e instanceof z.ZodError ? 400 : 500;

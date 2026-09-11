@@ -84,7 +84,7 @@ const commands: Record<string, Command> = {
     },
   },
   send: {
-    usage: "send [--as A|--token T] --to B [--wait N] <text>   send a DM",
+    usage: "send [--as A|--token T] --to B|#group [--wait N] <text>   send to an agent or a group",
     async run(args) {
       const { values, positionals } = parseArgs({
         args,
@@ -103,13 +103,14 @@ const commands: Record<string, Command> = {
         { to: values.to, body, wait: values.wait ? Number(values.wait) : undefined },
         await identityFor(values),
       );
-      const d = r.delivery;
-      console.log(`sent to ${r.to.name} (${d.status}${d.detail ? `: ${d.detail}` : ""})`);
+      for (const d of r.deliveries) {
+        console.log(`sent to ${d.to.name} (${d.status}${d.detail ? `: ${d.detail}` : ""})`);
+      }
       if (values.wait) console.log(r.reply ? renderItem(r.reply) : `no reply in ${values.wait}s`);
     },
   },
   sync: {
-    usage: "sync [--as A|--token T] [--scope B] [--wait N]    read my inbox",
+    usage: "sync [--as A|--token T] [--scope B|#group] [--wait N]   read my inbox",
     async run(args) {
       const { values } = parseArgs({
         args,
@@ -131,13 +132,25 @@ const commands: Record<string, Command> = {
     },
   },
   who: {
-    usage: "who [filter] [--fresh]                 agents on the bus",
+    usage: "who [filter] [--fresh] [--group #g] [--as A|--token T]   agents on the bus",
     async run(args) {
-      const filter = args.find((x) => !x.startsWith("--"));
-      const r = await rpc("who", {
-        filter,
-        fresh: args.includes("--fresh"),
+      const { values, positionals } = parseArgs({
+        args,
+        options: {
+          fresh: { type: "boolean" },
+          group: { type: "string" },
+          as: { type: "string" },
+          token: { type: "string" },
+        },
+        allowPositionals: true,
       });
+      // Without an identity the roster is everyone; with one, that caller's groupmates.
+      const identity = values.as || values.token ? await identityFor(values) : undefined;
+      const r = await rpc(
+        "who",
+        { filter: positionals[0], fresh: values.fresh, group: values.group },
+        identity,
+      );
       if (!r.agents.length) return console.log("nobody");
       console.log(
         table(
@@ -155,11 +168,10 @@ const commands: Record<string, Command> = {
     },
   },
   log: {
-    usage: "log [--conversation A,B]               messages with delivery state",
+    usage: "log [--conversation A,B|#group]        messages with delivery state",
     async run(args) {
       const { values } = parseArgs({ args, options: { conversation: { type: "string" } } });
-      const [a, b] = (values.conversation ?? "").split(",").filter(Boolean);
-      const r = await rpc("log", { a, b });
+      const r = await rpc("log", { conversation: values.conversation });
       console.log(
         table(
           ["seq", "id", "from", "to", "status", "detail", "body"],
@@ -174,6 +186,73 @@ const commands: Record<string, Command> = {
           ]),
         ),
       );
+    },
+  },
+  group: {
+    usage: "group #name [--add A,B] [--remove C]     create a group or change its members",
+    async run(args) {
+      const { values, positionals } = parseArgs({
+        args,
+        options: { add: { type: "string" }, remove: { type: "string" } },
+        allowPositionals: true,
+      });
+      const name = positionals[0];
+      if (!name) throw new Error("usage: modelbus group #name [--add A,B] [--remove C]");
+      const split = (s?: string) =>
+        s
+          ?.split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+      const r = await rpc("group", { name, add: split(values.add), remove: split(values.remove) });
+      console.log(
+        `#${r.conversation.name}: ${r.members.map((m) => m.name).join(", ") || "(empty)"}`,
+      );
+    },
+  },
+  rename: {
+    usage: "rename <agent> <name>                  pin a new name; the old one stays an alias",
+    async run(args) {
+      const [agent, ...rest] = args;
+      const name = rest.join(" ");
+      if (!agent || !name) throw new Error("usage: modelbus rename <agent> <name>");
+      const r = await rpc("rename", { agent, name });
+      console.log(`${r.agent.formerName ?? agent} is now ${r.agent.name}`);
+    },
+  },
+  chats: {
+    usage: "chats                                  every conversation, newest activity first",
+    async run() {
+      const r = await rpc("conversations", {});
+      if (!r.conversations.length) return console.log("no conversations yet");
+      console.log(
+        table(
+          ["chat", "members", "unread", "last"],
+          r.conversations.map((c) => [
+            c.kind === "group" ? `#${c.name}` : "dm",
+            c.participants.map((p) => p.name).join(", "),
+            String(c.unread),
+            c.last ? `${c.last.fromName}: ${c.last.body.split("\n")[0]?.slice(0, 50) ?? ""}` : "",
+          ]),
+        ),
+      );
+    },
+  },
+  history: {
+    usage: "history <#group|A,B> [--limit N] [--before SEQ]   read a conversation, newest last",
+    async run(args) {
+      const { values, positionals } = parseArgs({
+        args,
+        options: { limit: { type: "string" }, before: { type: "string" } },
+        allowPositionals: true,
+      });
+      const conversation = positionals[0];
+      if (!conversation) throw new Error("usage: modelbus history <#group|A,B>");
+      const r = await rpc("history", {
+        conversation,
+        limit: values.limit ? Number(values.limit) : undefined,
+        before: values.before ? Number(values.before) : undefined,
+      });
+      console.log(r.items.length ? r.items.map(renderItem).join("\n") : "nothing");
     },
   },
   register: {

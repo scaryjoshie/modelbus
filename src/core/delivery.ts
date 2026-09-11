@@ -1,4 +1,4 @@
-import type { AgentRow, MessageRow } from "./schema.ts";
+import type { AgentRow, ConversationRow, MessageRow } from "./schema.ts";
 
 /**
  * A message on its way to one recipient: the stored message and who sent it.
@@ -8,6 +8,7 @@ import type { AgentRow, MessageRow } from "./schema.ts";
 export interface Outbound {
   message: MessageRow;
   from: AgentRow;
+  conversation: ConversationRow;
 }
 
 /**

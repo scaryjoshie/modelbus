@@ -19,6 +19,9 @@ import {
  * An agent: our permanent id and display name, plus the host that holds its line
  * and the host's own key for it. Same (host, hostKey) is the same agent forever.
  * The key is opaque to the core; only the host's provider knows what it means.
+ *
+ * The name follows the host's until a person pins it by renaming; the previous
+ * name stays as an alias so a send addressed the old way still lands.
  */
 export const agents = sqliteTable(
   "agents",
@@ -28,15 +31,25 @@ export const agents = sqliteTable(
     host: text("host").notNull(),
     hostKey: text("host_key").notNull(),
     lastSeen: integer("last_seen").notNull(),
+    /** 1 once a person renamed it; the host's renames no longer apply. */
+    namePinned: integer("name_pinned").notNull().default(0),
+    /** The name before the last rename, resolvable for a while as an alias. */
+    formerName: text("former_name"),
   },
   (t) => [uniqueIndex("agents_host_key").on(t.host, t.hostKey)],
 );
 
+/**
+ * A conversation: a DM between two agents (`key = dm:<sorted ids>`, one per pair)
+ * or a named group (`key = group:<name>`). Groups are addressed as `#name`.
+ */
 export const conversations = sqliteTable("conversations", {
   id: text("id").primaryKey(),
-  /** dm (groups later) */
+  /** dm | group */
   kind: text("kind").notNull(),
   key: text("key").notNull().unique(),
+  /** Groups only; unique among groups. */
+  name: text("name").unique(),
   createdAt: integer("created_at").notNull(),
 });
 

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { and, count, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import type { DeliveryResult, DeliveryStatus, Outbound } from "./delivery.ts";
@@ -34,6 +34,14 @@ export type Message = MessageRow;
 export interface InboxItem extends Message {
   fromName: string;
   fromHost: string;
+}
+
+/** One conversation as a person sees the list of chats. */
+export interface ConversationOverview extends Conversation {
+  participants: Array<{ id: string; name: string }>;
+  last?: { seq: number; fromName: string; body: string; createdAt: number };
+  /** Deliveries in it not yet read by their recipients. */
+  unread: number;
 }
 
 export interface LogRow extends Message {
@@ -72,8 +80,12 @@ export class Store {
 
   // ---- agents -------------------------------------------------------------
 
+  /** By current name first; a former name still resolves, so a stale address lands. */
   agentByName(name: string): Agent | undefined {
-    return this.db.select().from(agents).where(eq(agents.name, name)).get();
+    return (
+      this.db.select().from(agents).where(eq(agents.name, name)).get() ??
+      this.db.select().from(agents).where(eq(agents.formerName, name)).get()
+    );
   }
 
   agentById(id: string): Agent | undefined {
@@ -105,8 +117,11 @@ export class Store {
     const now = Date.now();
     const existing = this.agentByHostKey(opts.host, opts.key);
     if (existing) {
+      // A pinned name is a person's choice; the host's renames no longer apply.
       const name =
-        existing.name !== opts.name && this.freeName(opts.name, existing.id) === opts.name
+        !existing.namePinned &&
+        existing.name !== opts.name &&
+        this.freeName(opts.name, existing.id) === opts.name
           ? opts.name
           : existing.name;
       this.db.update(agents).set({ lastSeen: now, name }).where(eq(agents.id, existing.id)).run();
@@ -118,9 +133,28 @@ export class Store {
       host: opts.host,
       hostKey: opts.key,
       lastSeen: now,
+      namePinned: 0,
+      formerName: null,
     };
     this.db.insert(agents).values(agent).run();
     return agent;
+  }
+
+  /**
+   * A person renames an agent: the name is pinned, and the old one stays as an
+   * alias. Returns undefined if the name is taken by another agent.
+   */
+  rename(agentId: string, name: string): Agent | undefined {
+    const agent = this.agentById(agentId);
+    if (!agent) return undefined;
+    if (this.freeName(name, agentId) !== name) return undefined;
+    const next = {
+      name,
+      namePinned: 1,
+      formerName: agent.name === name ? agent.formerName : agent.name,
+    };
+    this.db.update(agents).set(next).where(eq(agents.id, agentId)).run();
+    return { ...agent, ...next };
   }
 
   // ---- credentials (registered-agent auth) --------------------------------
@@ -169,7 +203,7 @@ export class Store {
     const key = `dm:${[a, b].sort().join("+")}`;
     const found = this.db.select().from(conversations).where(eq(conversations.key, key)).get();
     if (found) return found;
-    const conv: Conversation = { id: newId(), kind: "dm", key, createdAt: Date.now() };
+    const conv: Conversation = { id: newId(), kind: "dm", key, name: null, createdAt: Date.now() };
     this.db.transaction((tx) => {
       tx.insert(conversations).values(conv).run();
       tx.insert(participants)
@@ -180,6 +214,135 @@ export class Store {
         .run();
     });
     return conv;
+  }
+
+  conversationById(id: string): Conversation | undefined {
+    return this.db.select().from(conversations).where(eq(conversations.id, id)).get();
+  }
+
+  groupByName(name: string): Conversation | undefined {
+    return this.db.select().from(conversations).where(eq(conversations.name, name)).get();
+  }
+
+  /** The group with this name, created empty if it does not exist. */
+  group(name: string): Conversation {
+    const found = this.groupByName(name);
+    if (found) return found;
+    const conv: Conversation = {
+      id: newId(),
+      kind: "group",
+      key: `group:${name}`,
+      name,
+      createdAt: Date.now(),
+    };
+    this.db.insert(conversations).values(conv).run();
+    return conv;
+  }
+
+  /** Add and remove members; adding an existing member is a no-op. */
+  setMembers(conversationId: string, opts: { add?: string[]; remove?: string[] }): string[] {
+    const current = new Set(this.participants(conversationId));
+    this.db.transaction((tx) => {
+      const add = (opts.add ?? []).filter((id) => !current.has(id));
+      if (add.length) {
+        tx.insert(participants)
+          .values(add.map((agentId) => ({ conversationId, agentId })))
+          .run();
+      }
+      const remove = (opts.remove ?? []).filter((id) => current.has(id));
+      if (remove.length) {
+        tx.delete(participants)
+          .where(
+            and(
+              eq(participants.conversationId, conversationId),
+              inArray(participants.agentId, remove),
+            ),
+          )
+          .run();
+      }
+    });
+    return this.participants(conversationId);
+  }
+
+  /** Every conversation with its members, last message, and unread count; newest activity first. */
+  conversationsOverview(): ConversationOverview[] {
+    const convs = this.db.select().from(conversations).all();
+    const out: ConversationOverview[] = convs.map((c) => {
+      const members = this.db
+        .select({ id: agents.id, name: agents.name })
+        .from(participants)
+        .innerJoin(agents, eq(agents.id, participants.agentId))
+        .where(eq(participants.conversationId, c.id))
+        .all();
+      const lastRow = this.db
+        .select({
+          seq: messages.seq,
+          body: messages.body,
+          createdAt: messages.createdAt,
+          fromName: agents.name,
+        })
+        .from(messages)
+        .innerJoin(agents, eq(agents.id, messages.fromAgentId))
+        .where(eq(messages.conversationId, c.id))
+        .orderBy(desc(messages.seq))
+        .limit(1)
+        .get();
+      const unread =
+        this.db
+          .select({ n: count() })
+          .from(deliveries)
+          .innerJoin(messages, eq(messages.id, deliveries.messageId))
+          .where(and(eq(messages.conversationId, c.id), isNull(deliveries.readAt)))
+          .get()?.n ?? 0;
+      return { ...c, participants: members, last: lastRow ?? undefined, unread };
+    });
+    return out.sort((x, y) => (y.last?.seq ?? 0) - (x.last?.seq ?? 0) || y.createdAt - x.createdAt);
+  }
+
+  /** Messages in a conversation before `beforeSeq` (or the newest), newest last, at most `limit`. */
+  history(conversationId: string, opts: { beforeSeq?: number; limit: number }): InboxItem[] {
+    const where = [eq(messages.conversationId, conversationId)];
+    if (opts.beforeSeq !== undefined) where.push(sql`${messages.seq} < ${opts.beforeSeq}`);
+    const rows = this.db
+      .select({
+        seq: messages.seq,
+        id: messages.id,
+        conversationId: messages.conversationId,
+        fromAgentId: messages.fromAgentId,
+        body: messages.body,
+        createdAt: messages.createdAt,
+        fromName: agents.name,
+        fromHost: agents.host,
+      })
+      .from(messages)
+      .innerJoin(agents, eq(agents.id, messages.fromAgentId))
+      .where(and(...where))
+      .orderBy(desc(messages.seq))
+      .limit(opts.limit)
+      .all();
+    return rows.reverse();
+  }
+
+  /** Ids of everyone sharing a group with this agent (itself included); undefined if it is in no group. */
+  groupmates(agentId: string): Set<string> | undefined {
+    const rows = this.db
+      .select({ agentId: participants.agentId })
+      .from(participants)
+      .innerJoin(conversations, eq(conversations.id, participants.conversationId))
+      .where(
+        and(
+          eq(conversations.kind, "group"),
+          inArray(
+            participants.conversationId,
+            this.db
+              .select({ id: participants.conversationId })
+              .from(participants)
+              .where(eq(participants.agentId, agentId)),
+          ),
+        ),
+      )
+      .all();
+    return rows.length ? new Set(rows.map((r) => r.agentId)) : undefined;
   }
 
   participants(conversationId: string): string[] {
@@ -285,10 +448,11 @@ export class Store {
    */
   unread(agentId: string, states: DeliveryStatus[]): Outbound[] {
     return this.db
-      .select({ message: messages, from: agents })
+      .select({ message: messages, from: agents, conversation: conversations })
       .from(deliveries)
       .innerJoin(messages, eq(messages.id, deliveries.messageId))
       .innerJoin(agents, eq(agents.id, messages.fromAgentId))
+      .innerJoin(conversations, eq(conversations.id, messages.conversationId))
       .where(
         and(
           eq(deliveries.toAgentId, agentId),
@@ -300,15 +464,15 @@ export class Store {
       .all();
   }
 
-  /** Messages in a conversation from one sender with seq greater than `afterSeq`. */
-  repliesAfter(conversationId: string, fromAgentId: string, afterSeq: number): Message[] {
+  /** Messages in a conversation from anyone but `meId` with seq greater than `afterSeq`. */
+  repliesAfter(conversationId: string, meId: string, afterSeq: number): Message[] {
     return this.db
       .select()
       .from(messages)
       .where(
         and(
           eq(messages.conversationId, conversationId),
-          eq(messages.fromAgentId, fromAgentId),
+          ne(messages.fromAgentId, meId),
           gt(messages.seq, afterSeq),
         ),
       )

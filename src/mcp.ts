@@ -47,9 +47,9 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   server.registerTool(
     "send",
     {
-      description: "Message another agent on this machine by name.",
+      description: "Message an agent by name, or a group as #name.",
       inputSchema: {
-        to: z.string().describe("agent name, as shown by who"),
+        to: z.string().describe("agent name as shown by who, or #group"),
         body: z.string(),
         wait: z.number().int().min(0).optional().describe("seconds to wait for a reply"),
       },
@@ -58,8 +58,12 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
       try {
         await bound();
         const r = await client.request("send", { to, body, wait });
-        const d = r.delivery;
-        let out = `sent to ${r.to.name}${d.status === "failed" ? ` (not delivered: ${d.detail})` : ""}`;
+        let out = r.deliveries
+          .map(
+            (d) =>
+              `sent to ${d.to.name}${d.status === "failed" ? ` (not delivered: ${d.detail})` : ""}`,
+          )
+          .join("\n");
         if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
         return text(out);
       } catch (e) {
@@ -71,7 +75,7 @@ export async function runMcpShim(opts: { withSync: boolean }): Promise<void> {
   server.registerTool(
     "who",
     {
-      description: "List the agents on this machine.",
+      description: "List the agents you share a group with, or everyone if you are in none.",
       inputSchema: { filter: z.string().optional() },
     },
     async ({ filter }) => {

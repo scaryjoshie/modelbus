@@ -65,10 +65,10 @@ function buildServer(): McpServer {
   server.registerTool(
     "send",
     {
-      description: "Message another agent by name.",
+      description: "Message an agent by name, or a group as #name.",
       inputSchema: {
         as: z.string().describe("your id from join"),
-        to: z.string().describe("agent name, as shown by who"),
+        to: z.string().describe("agent name as shown by who, or #group"),
         body: z.string(),
         wait: z.number().int().min(0).optional().describe("seconds to wait for a reply"),
       },
@@ -76,8 +76,9 @@ function buildServer(): McpServer {
     async ({ as, to, body, wait }) => {
       try {
         const r = await createClient(requireJoined(as)).request("send", { to, body, wait });
-        const d = r.delivery;
-        let out = `sent to ${r.to.name} (${d.status}${d.detail ? `: ${d.detail}` : ""})`;
+        let out = r.deliveries
+          .map((d) => `sent to ${d.to.name} (${d.status}${d.detail ? `: ${d.detail}` : ""})`)
+          .join("\n");
         if (wait) out += `\n${r.reply ? renderItem(r.reply) : `no reply in ${wait}s`}`;
         return text(out);
       } catch (e) {

@@ -68,10 +68,10 @@ said. Presence is re-observed every few seconds and lives in the provider manage
 
 | Table | Row per | Columns |
 |---|---|---|
-| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's), `host` (which provider holds the line), `hostKey` (the host's own id, opaque to core, never a secret), `lastSeen` |
+| `agents` | agent | `id` (ours, permanent), `name` (display; follows the host's until pinned), `host` (which provider holds the line), `hostKey` (the host's own id, opaque to core, never a secret), `lastSeen`, `namePinned` (a person renamed it), `formerName` (alias after a rename) |
 | `credentials` | registered agent | `secretHash` (sha-256 of its token secret), `createdAt`; the agent's auth secret, kept apart from its identity |
-| `conversations` | pair | `kind = dm`, `key = dm:<sorted ids>` so there is one DM per pair |
-| `participants` | conversation × agent | ready for groups |
+| `conversations` | DM or group | `kind` (dm / group), `key` (`dm:<sorted ids>`, one per pair; `group:<name>`), `name` (groups only, unique) |
+| `participants` | conversation × agent | members; a group message goes to every member but the sender |
 | `messages` | message | `seq` (global order), `id` (short random; the read mark providers watch for), conversation, sender, body |
 | `deliveries` | message × recipient | `status` (sent / delivered / read / failed), `detail` (why only sent, how delivered, or why failed), `readAt` |
 
@@ -148,8 +148,9 @@ session-to-account map), or asks the daemon to remember through `Secrets`.
 the sender's agent row. Core does not render text. The connector chooses the host's
 form and, if it watches for the read mark, its own marker. The three built-in providers
 all take plain text, so each calls `util/attribution.ts` for the default form:
-`[modelbus #<id>] from <name>`, a blank line, the body unchanged; the marker is
-`#<id>`. A host with richer input would not use it.
+`[modelbus #<id>] <name> (<agent id>) → you` for a DM or `→ #<group>` for a group,
+a blank line, the body unchanged; the marker is `#<id>`. A host with richer input
+would not use it.
 
 A message has four states per recipient. `send` returns after storage and the
 push attempt, or throws on refusal. After that each recipient's copy is `sent`
@@ -201,11 +202,12 @@ along with its own timer. This is the disposable-out shape plugin hosts use.
 
 ## 8. A send, end to end (`core/api.ts`)
 
-1. RPC `send { to, body, wait? }` with an identity. The method table validates
-   params, resolves the identity to the sender's agent id, and resolves the
-   recipient's name to an id (after one reconcile pass if unknown). Core only
-   ever sees ids; the "try who" wording belongs to the daemon.
-2. Core looks both agents up by id.
+1. RPC `send { to, body, wait? }` with an identity. `to` is an agent name (that
+   DM, created on first use) or `#group`. The method table validates params,
+   resolves the identity to the sender's agent id, and resolves `to` to a
+   conversation id (after one reconcile pass if an agent name is unknown). Core
+   only ever sees ids; the "try who" wording belongs to the daemon.
+2. Core checks the sender is a member of the conversation.
 3. Guards: body ≤ 64 KB, not identical to something the sender wrote in this DM in
    the last 60 s, sender under 10 sends per minute. Refusals are `ApiError` → 422.
 4. Message + delivery row inserted in one transaction; an in-process event fires so
@@ -223,6 +225,29 @@ along with its own timer. This is the disposable-out shape plugin hosts use.
 `pull { scope?, wait?, limit? }` returns unread deliveries (oldest first, cap
 50), marks them read, and reports `more` and `moreElsewhere`. It is the line
 for pull-only recipients and the explicit catch-up (`sync`) for everyone else.
+
+### Groups, scoping, names
+
+A group is a conversation with a name and any number of members, addressed as
+`#name`. `group { name, add?, remove? }` creates it if needed and changes its
+members; anyone on the local socket may call it (a person, through the CLI or
+TUI). A message to a group produces one delivery per other member, each with its
+own state. Waiting for a reply in a group returns the next message from anyone
+else in it.
+
+`who` is scoped: a caller that belongs to any group sees its groupmates by default
+(`all: true` for everyone; `group: "#name"` for one group's members); a caller in
+no group, or no caller, sees everyone.
+
+`rename { agent, name }` pins a name: the host's own renames stop applying, the
+previous name stays as an alias so a send addressed the old way still lands, and
+a taken name is refused. Both hosts rename sessions on resume, which is why names
+follow the host until a person pins one. Ids never change and remain the reference.
+
+`conversations` lists every chat with members, last message, and how many
+deliveries in it are unread; `history { conversation, before?, limit? }` reads
+one conversation newest-last, a page at a time. These are the reads a person's
+view uses; agents keep `pull`.
 
 ## 9. Hosts
 
@@ -256,7 +281,8 @@ own policy.
 ## 10. Protocol and clients
 
 RPC: POST `{ method, params, identity? }` to `~/.modelbus/daemon.sock` path `/rpc`.
-Methods: `ping`, `bind`, `attach`, `register`, `send`, `pull`, `who`, `log`. The
+Methods: `ping`, `bind`, `attach`, `register`, `send`, `pull`, `who`, `log`,
+`group`, `rename`, `conversations`, `history`. The
 method table in `daemon.ts` is the protocol; `client.ts` derives its types from it,
 so `rpc("who", { filter })` is checked at compile time. See `protocol.md`.
 

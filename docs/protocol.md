@@ -26,7 +26,8 @@ clarity; `MODELBUS_TOKEN` also works across commands.
 modelbus sync --token <t> [--wait <seconds>]
 ```
 
-One line per message, `sender: text`, or the word `nothing`. With `--wait` the call
+One line per message, `sender: text`, or the word `nothing`. `--scope` takes an
+agent name (that DM) or `#group`. With `--wait` the call
 blocks until a message arrives (up to 240 s); a process that keeps one such call
 open receives as it happens. There is no push into a registered process: its open
 call is its line.
@@ -68,10 +69,14 @@ local POC protocol is not yet an authenticated cloud/provider-delegation protoco
 | `register` | `{name}` | no | `{agent, token}` |
 | `bind` | | yes | `{agent}` |
 | `attach` | provider-specific runtime info | yes | `{agent, attached}` |
-| `send` | `{to, body, wait?}` | yes | `{message, to, delivery: {status, detail?}, reply?}` |
-| `pull` | `{scope?, wait?, limit?}` | yes | `{items, more, moreElsewhere}` |
-| `who` | `{filter?, fresh?}` | no | `{agents: RosterEntry[]}` |
-| `log` | `{a?, b?}` | no | `{rows}` |
+| `send` | `{to, body, wait?}`; `to` is an agent name or `#group` | yes | `{message, conversation, deliveries: [{to, status, detail?}], reply?}` |
+| `pull` | `{scope?, wait?, limit?}`; `scope` is an agent name or `#group` | yes | `{items, more, moreElsewhere}` |
+| `who` | `{filter?, fresh?, group?, all?}` | optional: a caller in groups sees groupmates unless `all` | `{agents: RosterEntry[]}` |
+| `log` | `{conversation?}`: `#group` or `a,b` | no | `{rows}` |
+| `group` | `{name, add?, remove?}` | no | `{conversation, members}` |
+| `rename` | `{agent, name}` | no | `{agent}` |
+| `conversations` | | no | `{conversations}` |
+| `history` | `{conversation, before?, limit?}` | no | `{items}` |
 
 `delivery.status` is `sent` (the daemon has it and nothing reached the recipient
 yet; `detail` says why), `delivered` (the recipient's host accepted the push), or

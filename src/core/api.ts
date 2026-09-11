@@ -1,14 +1,21 @@
 import { EventEmitter } from "node:events";
 import type { DeliveryResult, DeliveryStatus, Outbound } from "./delivery.ts";
 import { DEFAULT_LIMITS, type Limits } from "./limits.ts";
-import type { Agent, InboxItem, Message, Store } from "./store.ts";
+import type {
+  Agent,
+  Conversation,
+  ConversationOverview,
+  InboxItem,
+  Message,
+  Store,
+} from "./store.ts";
 
 /**
  * The bus API: the runtime invokes the same handlers for every client.
- * Agents are addressed by id only. The caller layer resolves identity and any
- * display names before calling in. Delivery is delegated through `deliver`,
- * supplied by the daemon (the provider manager), so the API knows nothing about
- * host implementations.
+ * Agents and conversations are addressed by id only. The caller layer resolves
+ * identity and display names (`reviewer`, `#backend`) before calling in.
+ * Delivery is delegated through `deliver`, supplied by the daemon (the provider
+ * manager), so the API knows nothing about host implementations.
  */
 
 export type Deliver = (
@@ -25,10 +32,18 @@ interface MessageEvent {
   message: Message;
 }
 
+/** What a send produced: one result per recipient. */
+export interface SendResult {
+  message: Message;
+  conversation: Conversation;
+  deliveries: Array<{ to: Agent } & DeliveryResult>;
+  reply?: InboxItem;
+}
+
 export class Api {
   private readonly events = new EventEmitter();
   private deliver: Deliver = async () => ({ status: "sent", detail: "no push path" });
-  /** conversation:replier pairs someone is currently blocked on inline. */
+  /** conversation:agent pairs currently blocked inline waiting for a reply. */
   private readonly waiting = new Set<string>();
   /** Message ids with a push in flight, so a retry never pushes one twice. */
   private readonly pushing = new Set<string>();
@@ -48,48 +63,56 @@ export class Api {
 
   // ---- send ---------------------------------------------------------------
 
+  /** Send into a conversation the sender belongs to; each other member gets a copy. */
   async send(opts: {
     fromId: string;
-    toId: string;
+    conversationId: string;
     body: string;
     wait?: number;
-  }): Promise<{ message: Message; to: Agent; delivery: DeliveryResult; reply?: InboxItem }> {
+  }): Promise<SendResult> {
     const from = this.store.agentById(opts.fromId);
     if (!from) throw new ApiError("sender is not a known agent");
-    const to = this.store.agentById(opts.toId);
-    if (!to) throw new ApiError("recipient is not a known agent");
-    if (to.id === from.id) throw new ApiError("cannot send to yourself");
+    const conversation = this.store.conversationById(opts.conversationId);
+    if (!conversation) throw new ApiError("unknown conversation");
+    const members = this.store.participants(conversation.id);
+    if (!members.includes(from.id)) throw new ApiError("sender is not in this conversation");
     const { bodyCapBytes, dedupeWindowMs, rateLimit, rateWindowMs } = this.limits;
     if (Buffer.byteLength(opts.body, "utf8") > bodyCapBytes) {
       throw new ApiError(`body exceeds ${bodyCapBytes} bytes`);
     }
     if (!opts.body.trim()) throw new ApiError("empty body");
-    const conv = this.store.dm(from.id, to.id);
-    if (this.store.identicalRecently(conv.id, from.id, opts.body, dedupeWindowMs) > 0) {
+    if (this.store.identicalRecently(conversation.id, from.id, opts.body, dedupeWindowMs) > 0) {
       throw new ApiError("dropped: identical message sent within the last minute");
     }
     if (this.store.sendsSince(from.id, rateWindowMs) >= rateLimit) {
       throw new ApiError(`refused: over ${rateLimit} sends per ${rateWindowMs / 1000}s`);
     }
-    const message = this.store.insertMessage(conv.id, from.id, opts.body);
+    const message = this.store.insertMessage(conversation.id, from.id, opts.body);
     this.store.touch(from.id);
-    this.events.emit("message", { conversationId: conv.id, toIds: [to.id], message });
+    const toIds = members.filter((id) => id !== from.id);
+    this.events.emit("message", { conversationId: conversation.id, toIds, message });
 
-    // A reply someone is blocked on inline is returned through that call, not also
-    // pushed into their host (it would arrive twice).
-    let delivery: DeliveryResult;
-    if (this.waiting.has(`${conv.id}:${from.id}`)) {
-      delivery = { status: "delivered", detail: "returned inline to the waiting sender" };
-      this.store.recordDelivery(message.id, to.id, delivery);
-    } else {
-      delivery = await this.push(to, { message, from });
+    const deliveries: SendResult["deliveries"] = [];
+    for (const toId of toIds) {
+      const to = this.store.agentById(toId);
+      if (!to) continue;
+      // A recipient blocked inline waiting in this conversation gets the message
+      // through that call, not also pushed into its host (it would arrive twice).
+      let result: DeliveryResult;
+      if (this.waiting.has(`${conversation.id}:${to.id}`)) {
+        result = { status: "delivered", detail: "returned inline to the waiting recipient" };
+        this.store.recordDelivery(message.id, to.id, result);
+      } else {
+        result = await this.push(to, { message, from, conversation });
+      }
+      deliveries.push({ to, ...result });
     }
 
     const reply =
       opts.wait && opts.wait > 0
-        ? await this.waitForReply(from.id, to, conv.id, message.seq, opts.wait)
+        ? await this.waitForReply(from.id, conversation.id, message.seq, opts.wait)
         : undefined;
-    return { message, to, delivery, reply };
+    return { message, conversation, deliveries, reply };
   }
 
   /** One push through the delivery port, with its result recorded. */
@@ -130,26 +153,27 @@ export class Api {
     return counts;
   }
 
+  /** The next message in the conversation from anyone but me, after `afterSeq`. */
   private async waitForReply(
     meId: string,
-    from: Agent,
     conversationId: string,
     afterSeq: number,
     waitSeconds: number,
   ): Promise<InboxItem | undefined> {
     const take = (): InboxItem | undefined => {
-      const [m] = this.store.repliesAfter(conversationId, from.id, afterSeq);
+      const [m] = this.store.repliesAfter(conversationId, meId, afterSeq);
       if (!m) return undefined;
       this.store.markRead([m.id], meId);
-      return { ...m, fromName: from.name, fromHost: from.host };
+      const from = this.store.agentById(m.fromAgentId);
+      return { ...m, fromName: from?.name ?? "?", fromHost: from?.host ?? "?" };
     };
     const first = take();
     if (first) return first;
-    const key = `${conversationId}:${from.id}`;
+    const key = `${conversationId}:${meId}`;
     this.waiting.add(key);
     try {
       await this.awaitEvent(
-        (ev) => ev.conversationId === conversationId && ev.message.fromAgentId === from.id,
+        (ev) => ev.conversationId === conversationId && ev.message.fromAgentId !== meId,
         waitSeconds,
       );
     } finally {
@@ -160,10 +184,10 @@ export class Api {
 
   // ---- pull (sync) --------------------------------------------------------
 
-  /** `scopeId` limits the read to the DM with that agent. */
+  /** `conversationId` limits the read to one conversation. */
   async pull(opts: {
     agentId: string;
-    scopeId?: string;
+    conversationId?: string;
     wait?: number;
     limit?: number;
   }): Promise<{ items: InboxItem[]; more: number; moreElsewhere: number }> {
@@ -171,7 +195,7 @@ export class Api {
     if (!me) throw new ApiError("unknown agent");
     this.store.touch(me.id);
     const limit = Math.min(opts.limit ?? this.limits.pullLimit, this.limits.pullLimit);
-    const conversationId = opts.scopeId ? this.store.dm(me.id, opts.scopeId).id : undefined;
+    const conversationId = opts.conversationId;
 
     const take = () => {
       const items = this.store.inbox(me.id, { conversationId, limit });
@@ -213,11 +237,46 @@ export class Api {
     });
   }
 
-  // ---- log ----------------------------------------------------------------
+  // ---- groups, names, reading ---------------------------------------------
 
-  /** Every message, or only the DM between two agent ids. */
-  log(opts: { between?: [string, string] }) {
-    const conversationId = opts.between ? this.store.dm(...opts.between).id : undefined;
-    return this.store.log(conversationId);
+  /** The group with this name (created if missing) after adding and removing members. */
+  group(opts: { name: string; add?: string[]; remove?: string[] }): {
+    conversation: Conversation;
+    members: string[];
+  } {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(opts.name)) {
+      throw new ApiError("group names are letters, digits, dot, dash, underscore; up to 64");
+    }
+    const conversation = this.store.group(opts.name);
+    const members = this.store.setMembers(conversation.id, opts);
+    return { conversation, members };
+  }
+
+  /** A person pins a new name on an agent; the old name stays as an alias. */
+  rename(agentId: string, name: string): Agent {
+    if (!name.trim() || name.includes("\n") || name.startsWith("#")) {
+      throw new ApiError("a name is one line and does not start with #");
+    }
+    const agent = this.store.rename(agentId, name.trim());
+    if (!agent) throw new ApiError(`name "${name}" is taken`);
+    return agent;
+  }
+
+  /** Every conversation, for a person looking at the chats. */
+  conversations(): ConversationOverview[] {
+    return this.store.conversationsOverview();
+  }
+
+  /** A page of one conversation, newest last. */
+  history(opts: { conversationId: string; beforeSeq?: number; limit?: number }): InboxItem[] {
+    if (!this.store.conversationById(opts.conversationId))
+      throw new ApiError("unknown conversation");
+    const limit = Math.min(opts.limit ?? this.limits.pullLimit, this.limits.pullLimit);
+    return this.store.history(opts.conversationId, { beforeSeq: opts.beforeSeq, limit });
+  }
+
+  /** Every message with delivery state, or only one conversation's. */
+  log(opts: { conversationId?: string }) {
+    return this.store.log(opts.conversationId);
   }
 }
