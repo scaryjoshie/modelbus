@@ -543,6 +543,10 @@ describe("protocol: candidates", () => {
       const east = { kind: "self", provider: "fake", key: "k-east", name: "east" } as const;
       const brief = await rpc("register", { purpose: "faces east" }, east, unix);
       expect(brief.agent.purpose).toBe("faces east");
+      // registering again from the session itself updates the purpose; same agent
+      const again = await rpc("register", { purpose: "faces further east" }, east, unix);
+      expect(again.agent.id).toBe(brief.agent.id);
+      expect(again.agent.purpose).toBe("faces further east");
       expect(brief.briefing.groups).toEqual([{ name: "compass", members: ["east", "north"] }]);
       expect(brief.briefing.unread.map((m) => m.body)).toEqual(["welcome"]);
     } finally {

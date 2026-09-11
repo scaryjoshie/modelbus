@@ -149,6 +149,8 @@ function buildMethods(store: Store, api: Api, providerManager: ProviderManager) 
       }),
       handler: async (p, id, identity) => {
         if (identity?.kind === "self") {
+          // A session registered on its behalf (by a person, or by being named into
+          // a chat) registers again to state its purpose; that is an update, not an error.
           const agent = providerManager.register({
             provider: identity.provider,
             key: identity.key,
